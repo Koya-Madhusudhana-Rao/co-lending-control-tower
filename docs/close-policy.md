@@ -2,13 +2,13 @@
 
 ## Deterministic hold formula
 
-`HOLD if unresolvedINR > min(₹10,000, 0.005 × batchTotalINR)`
+HOLD if unresolvedINR > min(10000, 0.005 * batchTotalINR)
 
 Equivalent expression:
 
-`HOLD if unresolvedINR > 10000` when `0.005 × batchTotalINR >= 10000`
+HOLD if unresolvedINR > 10000 when 0.005 * batchTotalINR >= 10000
 
-`HOLD if unresolvedINR > 0.005 × batchTotalINR` when `0.005 × batchTotalINR < 10000`
+HOLD if unresolvedINR > 0.005 * batchTotalINR when 0.005 * batchTotalINR < 10000
 
 This is the exact policy used to block closure when unresolved financial exposure remains material.
 

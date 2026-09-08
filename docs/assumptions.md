@@ -3,8 +3,9 @@
 ## Default timezone and grace window
 
 - Default timezone: Asia/Kolkata (IST)
-- Timing difference policy: a valid event is considered pending when it arrives after the reconciliation cut-off but within a configured grace window of 2 continuous business hours.
-- Definition of the 2-hour window: measured as continuous clock hours from the cut-off timestamp in IST, regardless of day boundary. If the cut-off is at 17:30 IST, the window ends at 19:30 IST on the same day. It does not automatically roll to the next business day. This is intentional: the policy is a fixed time-window, not a calendar-day bucket, so the same late-arrival rule applies consistently across batches and avoids ambiguity around overnight carry-over.
+- Timing difference policy: a valid event is considered pending when it arrives after the reconciliation cut-off but within a configured grace window of 2 continuous clock hours.
+- Definition of the 2-hour window: measured as continuous clock hours from the cut-off timestamp in IST, regardless of day boundary. If the cut-off is at 17:30 IST, the window ends at 19:30 IST on the same day. It does not automatically roll to the next business day. The policy is intentionally fixed at exactly 2 real hours from the cut-off; it is not a business-day bucket and it is not shortened to preserve a nominal end-of-day cutoff.
+- Explicit edge-case answer: no, the rule does not truncate the grace window below 2 real hours simply because the cut-off falls late in the business day. The policy is a fixed elapsed-time window, not a calendar-day window. If the cut-off occurs late in the day, the 2-hour window can continue past midnight, but the elapsed time remains exactly 2 hours. This is acceptable because it preserves deterministic policy and prevents a late cut-off from silently creating a shorter or longer exception window than configured.
 - Why this is safe: it is deterministic, auditable, and operationally simple. The same batch cannot silently inherit a larger or smaller window based on calendar rollover, and it avoids hidden business-day logic that could distort exception ownership.
 
 ## Authoritative source rules
