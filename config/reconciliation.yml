@@ -1,0 +1,11 @@
+# Financial safety defaults and policy values.
+# HOLD if unresolvedINR > min(10000, 0.005 * batchTotalINR)
+reconciliation:
+  amountToleranceInr: 1.00
+  graceWindowHours: 2
+  graceWindowTimezone: Asia/Kolkata
+  graceWindowMode: continuous-clock-hours
+  closePolicy:
+    absoluteThresholdInr: 10000
+    relativeThresholdRate: 0.005
+    holdFormula: "unresolvedINR > min(10000, 0.005 * batchTotalINR)"
