@@ -10,6 +10,8 @@ public record CloseHoldDecision(
     List<String> blockingRecordReferences
 ) {
     public CloseHoldDecision {
+        thresholdInr = thresholdInr.stripTrailingZeros();
+        blockingInr = blockingInr.stripTrailingZeros();
         blockingRecordReferences = List.copyOf(blockingRecordReferences);
     }
 

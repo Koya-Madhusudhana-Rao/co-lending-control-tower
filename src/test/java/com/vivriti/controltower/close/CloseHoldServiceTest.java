@@ -51,7 +51,7 @@ class CloseHoldServiceTest {
         CloseHoldDecision decision = service.decide(new BigDecimal("3000000.00"), List.of(unresolved), List.of());
 
         assertEquals(CloseHoldDecision.Decision.HOLD, decision.decision());
-        assertEquals(new BigDecimal("10001.00"), decision.blockingInr());
+        assertTrue(decision.blockingInr().compareTo(new BigDecimal("10001.00")) == 0);
         assertEquals(List.of("UNRESOLVED-1"), decision.blockingRecordReferences());
     }
 

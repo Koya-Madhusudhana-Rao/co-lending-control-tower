@@ -4,6 +4,11 @@ import com.vivriti.controltower.exceptions.CauseConfidence;
 import com.vivriti.controltower.exceptions.ExceptionClassification;
 import com.vivriti.controltower.exceptions.ExceptionDetection;
 import com.vivriti.controltower.exceptions.Actor;
+import com.vivriti.controltower.exceptions.AppendOnlyAuditTrail;
+import com.vivriti.controltower.exceptions.ExceptionOverrideService;
+import com.vivriti.controltower.exceptions.ExceptionQueueService;
+import com.vivriti.controltower.exceptions.ExceptionStatus;
+import com.vivriti.controltower.exceptions.ExceptionStateSnapshot;
 import com.vivriti.controltower.exceptions.Role;
 import com.vivriti.controltower.generator.GeneratorOutput;
 import com.vivriti.controltower.generator.SeededFeedGenerator;
@@ -24,8 +29,8 @@ class Phase1PipelineServiceTest {
     private static final LocalDateTime CUTOFF = LocalDateTime.of(2026, 8, 1, 17, 30);
 
     @Test
-    void exactDuplicateBatchRerunProducesIdenticalStateWithoutDuplicateExceptionsOrAudits() {
-        Phase1PipelineService pipeline = new Phase1PipelineService();
+    void exactDuplicateBatchRerunProducesIdenticalStateWithoutDuplicateExceptionsOrAudits() throws Exception {
+        Phase1PipelineService pipeline = new Phase1PipelineService(Files.createTempDirectory("idempotency-runs"));
         PipelineBatch batch = batch("BATCH-001", validOriginator(), validLms(), validBank(), List.of(exceptionDetection()));
 
         PipelineSnapshot first = pipeline.process(batch).snapshot();
@@ -39,8 +44,8 @@ class Phase1PipelineServiceTest {
     }
 
     @Test
-    void corruptBatchDoesNotAffectSeparateValidBatchInSameRun() {
-        Phase1PipelineService pipeline = new Phase1PipelineService();
+    void corruptBatchDoesNotAffectSeparateValidBatchInSameRun() throws Exception {
+        Phase1PipelineService pipeline = new Phase1PipelineService(Files.createTempDirectory("isolation-runs"));
         PipelineRunResult corrupt = pipeline.process(new PipelineBatch(
             "BATCH-001", List.of("not,a,valid,row"), validLms(), validBank(), CUTOFF, List.of()));
         PipelineRunResult valid = pipeline.process(batch("BATCH-001", validOriginator(), validLms(), validBank(), List.of()));
@@ -63,7 +68,7 @@ class Phase1PipelineServiceTest {
             List.of()
         );
 
-        PipelineRunResult result = new Phase1PipelineService().process(batch);
+        PipelineRunResult result = new Phase1PipelineService(Files.createTempDirectory("degraded-runs")).process(batch);
 
         assertTrue(result.succeeded());
         assertEquals(9, result.snapshot().canonicalRecordFingerprints().size());
@@ -72,8 +77,8 @@ class Phase1PipelineServiceTest {
     }
 
     @Test
-    void deterministicExceptionIdIsReusedByPipelineForSameDetectionInput() {
-        Phase1PipelineService pipeline = new Phase1PipelineService();
+    void deterministicExceptionIdIsReusedByPipelineForSameDetectionInput() throws Exception {
+        Phase1PipelineService pipeline = new Phase1PipelineService(Files.createTempDirectory("exception-runs"));
         ExceptionDetection detection = new ExceptionDetection(
             new com.vivriti.controltower.domain.CanonicalEvent(), ExceptionClassification.AMOUNT_MISMATCH,
             List.of("source.csv#line=1"), "amount-rule", "evidence", CauseConfidence.CONFIRMED,
@@ -90,6 +95,47 @@ class Phase1PipelineServiceTest {
         PipelineBatch secondBatch = batch("BATCH-001", validOriginator(), validLms(), validBank(), List.of(duplicate));
 
         assertEquals(pipeline.process(firstBatch).snapshot().exceptionIds(), pipeline.process(secondBatch).snapshot().exceptionIds());
+    }
+
+    @Test
+    void persistedRunCanBeReloadedAndExceptionTotalsRecomputedIndependently() throws Exception {
+        Path runsRoot = Files.createTempDirectory("recalculate-runs");
+        Phase1PipelineService pipeline = new Phase1PipelineService(runsRoot);
+        PipelineSnapshot original = pipeline.process(batch("BATCH-001", validOriginator(), validLms(), validBank(), List.of(exceptionDetection()))).snapshot();
+
+        var persistedExceptions = pipeline.durableRunStore().loadExceptionRecords(original.batchFingerprint());
+        BigDecimal recomputedBlocking = BigDecimal.ZERO;
+        for (var exception : persistedExceptions) {
+            if ("OPEN".equals(exception.at("/statusHistory").get(exception.at("/statusHistory").size() - 1).at("/status").asText())) {
+                recomputedBlocking = recomputedBlocking.add(new BigDecimal(exception.at("/amountInr").asText()));
+            }
+        }
+
+        assertEquals(original.closeHoldDecision().blockingInr().compareTo(recomputedBlocking), 0);
+        assertTrue(Files.exists(runsRoot.resolve(original.batchFingerprint()).resolve("canonical-records.json")));
+        assertTrue(Files.exists(runsRoot.resolve(original.batchFingerprint()).resolve("exception-records.json")));
+        assertTrue(Files.exists(runsRoot.resolve(original.batchFingerprint()).resolve("audit-entries.json")));
+        assertTrue(Files.exists(runsRoot.resolve(original.batchFingerprint()).resolve("close-hold-decision.json")));
+    }
+
+    @Test
+    void restartLoadsPersistedSnapshotAndAuditEntriesWithoutReprocessing() throws Exception {
+        Path runsRoot = Files.createTempDirectory("restart-runs");
+        Phase1PipelineService firstPipeline = new Phase1PipelineService(runsRoot);
+        var exception = new ExceptionQueueService().create(exceptionDetection());
+        var auditTrail = new AppendOnlyAuditTrail();
+        var auditEntry = new ExceptionOverrideService(auditTrail).approveStatusOverride(
+            exception, new Actor("operator-2", Role.OPERATOR), new Actor("approver-1", Role.APPROVER),
+            ExceptionStatus.RESOLVED, "Approved correction", CUTOFF);
+        firstPipeline.auditTrail().append(auditEntry.auditEntry());
+        PipelineSnapshot first = firstPipeline.process(batch("BATCH-001", validOriginator(), validLms(), validBank(), List.of())).snapshot();
+
+        Phase1PipelineService restartedPipeline = new Phase1PipelineService(runsRoot);
+        PipelineSnapshot reloaded = restartedPipeline.process(batch("BATCH-001", validOriginator(), validLms(), validBank(), List.of())).snapshot();
+
+        assertEquals(first, reloaded);
+        assertEquals(1, reloaded.auditEntryCount());
+        assertEquals(1, restartedPipeline.durableRunStore().loadAuditEntries(first.batchFingerprint()).size());
     }
 
     private PipelineBatch batch(String id, List<String> originator, List<String> lms, List<String> bank, List<ExceptionDetection> detections) {

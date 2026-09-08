@@ -7,6 +7,7 @@ import com.vivriti.controltower.domain.CanonicalEvent;
 import com.vivriti.controltower.domain.MatchingState;
 import com.vivriti.controltower.exceptions.ExceptionQueueService;
 import com.vivriti.controltower.exceptions.ExceptionRecord;
+import com.vivriti.controltower.exceptions.AppendOnlyAuditTrail;
 import com.vivriti.controltower.ingestion.FeedIngestionService;
 import com.vivriti.controltower.ingestion.FeedType;
 import com.vivriti.controltower.ingestion.IngestionBatchResult;
@@ -32,12 +33,19 @@ public class Phase1PipelineService {
     private final CompositeAndTimingMatcher compositeAndTiming = new CompositeAndTimingMatcher();
     private final ExceptionQueueService exceptions = new ExceptionQueueService();
     private final CloseHoldService closeHold;
+    private final DurableRunStore durableRunStore;
+    private final AppendOnlyAuditTrail auditTrail = new AppendOnlyAuditTrail();
     private final Map<String, PipelineSnapshot> completedBatches = new java.util.HashMap<>();
 
     public Phase1PipelineService() {
+        this(Path.of("data", "runs"));
+    }
+
+    public Phase1PipelineService(Path runsRoot) {
         CloseHoldPolicy policy = CloseHoldPolicy.fromConfig(Path.of("config", "reconciliation.yml"));
         this.exactMatcher = new ExactReconciliationMatcher(new BigDecimal("1.00"));
         this.closeHold = new CloseHoldService(policy);
+        this.durableRunStore = new DurableRunStore(runsRoot);
     }
 
     public synchronized PipelineRunResult process(PipelineBatch batch) {
@@ -45,6 +53,11 @@ public class Phase1PipelineService {
         PipelineSnapshot cached = completedBatches.get(fingerprint);
         if (cached != null) {
             return new PipelineRunResult(batch.batchId(), cached, null);
+        }
+        if (durableRunStore.exists(fingerprint)) {
+            PipelineSnapshot persisted = durableRunStore.loadSnapshot(fingerprint);
+            completedBatches.put(fingerprint, persisted);
+            return new PipelineRunResult(batch.batchId(), persisted, null);
         }
         try {
             List<CanonicalEvent> canonical = normalize(batch);
@@ -61,8 +74,9 @@ public class Phase1PipelineService {
                 canonical.stream().map(this::canonicalFingerprint).sorted().toList(),
                 exceptionRecords.stream().map(ExceptionRecord::exceptionId).sorted().toList(),
                 decision,
-                0
+                auditTrail.entries().size()
             );
+            durableRunStore.save(fingerprint, canonical, exceptionRecords, auditTrail.entries(), decision);
             completedBatches.put(fingerprint, snapshot);
             return new PipelineRunResult(batch.batchId(), snapshot, null);
         } catch (RuntimeException exception) {
@@ -72,6 +86,18 @@ public class Phase1PipelineService {
 
     public List<PipelineRunResult> processAll(List<PipelineBatch> batches) {
         return batches.stream().map(this::process).toList();
+    }
+
+    public void clearInMemoryState() {
+        completedBatches.clear();
+    }
+
+    public AppendOnlyAuditTrail auditTrail() {
+        return auditTrail;
+    }
+
+    public DurableRunStore durableRunStore() {
+        return durableRunStore;
     }
 
     private List<CanonicalEvent> normalize(PipelineBatch batch) {
@@ -103,7 +129,8 @@ public class Phase1PipelineService {
 
     private String canonicalFingerprint(CanonicalEvent event) {
         return String.join("|", String.valueOf(event.getSourceSystem()), String.valueOf(event.getBusinessEventId()),
-            String.valueOf(event.getAmount()), String.valueOf(event.getPayloadHash()), String.valueOf(event.getMatchingState()),
+            event.getAmount() == null ? "null" : event.getAmount().stripTrailingZeros().toPlainString(),
+            String.valueOf(event.getPayloadHash()), String.valueOf(event.getMatchingState()),
             String.valueOf(event.getReconciliationState()));
     }
 
