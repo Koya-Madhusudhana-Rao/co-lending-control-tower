@@ -50,13 +50,17 @@ class FeedIngestionServiceTest {
     }
 
     @Test
-    void quarantinesInputBeyondTwoHourGraceWindow() {
-        String late = originatorWithReceivedTime("INSTR-001", "2026-08-01T17:00:00", "100.00", "2026-08-01T19:31:00");
+    void tagsGraceWindowLateInputAndQuarantinesExpiredLateInput() {
+        String withinGrace = originatorWithReceivedTime("INSTR-001", "2026-08-01T17:00:00", "100.00", "2026-08-01T18:30:00");
+        String beyondGrace = originatorWithReceivedTime("INSTR-002", "2026-08-01T17:00:00", "100.00", "2026-08-01T19:31:00");
 
-        IngestionBatchResult result = service.ingest(FeedType.ORIGINATOR, List.of(late), "BATCH-001", null, cutOff);
+        IngestionBatchResult result = service.ingest(FeedType.ORIGINATOR, List.of(withinGrace, beyondGrace), "BATCH-001", null, cutOff);
 
-        assertEquals(0, result.acceptedRecords().size());
+        assertEquals(1, result.acceptedRecords().size());
+        assertEquals(ValidationState.LATE_ARRIVAL, result.acceptedRecords().get(0).validationState());
+        assertEquals(1, result.quarantinedRecords().size());
         assertEquals(ValidationState.LATE_ARRIVAL, result.quarantinedRecords().get(0).validationState());
+        assertEquals(beyondGrace, result.quarantinedRecords().get(0).originalRecord());
     }
 
     @Test

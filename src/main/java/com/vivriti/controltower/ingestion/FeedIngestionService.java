@@ -33,6 +33,7 @@ public class FeedIngestionService {
             int lineNumber = index + 1;
             String[] columns = rawRecord == null ? new String[0] : rawRecord.split(",", -1);
             ValidationState validationState = validateShape(feedType, columns);
+            boolean acceptedForFlow = false;
             BigDecimal parsedAmount = parseAmount(feedType, columns);
             if (parsedAmount != null) {
                 observedAmount = observedAmount.add(parsedAmount);
@@ -51,9 +52,14 @@ public class FeedIngestionService {
                         validationState = ValidationState.DUPLICATE;
                     } else if (arrivalTime.isAfter(reconciliationCutOff.plus(GRACE_WINDOW))) {
                         validationState = ValidationState.LATE_ARRIVAL;
+                    } else if (arrivalTime.isAfter(reconciliationCutOff)) {
+                        validationState = ValidationState.LATE_ARRIVAL;
+                        acceptedAmount = acceptedAmount.add(parsedAmount);
+                        acceptedForFlow = true;
                     } else {
                         validationState = ValidationState.VALID;
                         acceptedAmount = acceptedAmount.add(parsedAmount);
+                        acceptedForFlow = true;
                     }
                 } catch (RuntimeException exception) {
                     validationState = ValidationState.MALFORMED_SCHEMA;
@@ -63,10 +69,10 @@ public class FeedIngestionService {
             IngestionRecord record = new IngestionRecord(
                 lineNumber,
                 rawRecord,
-                validationState == ValidationState.VALID ? IngestionState.VALIDATED : IngestionState.QUARANTINED,
+                acceptedForFlow ? IngestionState.VALIDATED : IngestionState.QUARANTINED,
                 validationState
             );
-            if (validationState == ValidationState.VALID) {
+            if (acceptedForFlow) {
                 accepted.add(record);
             } else {
                 quarantined.add(record);
