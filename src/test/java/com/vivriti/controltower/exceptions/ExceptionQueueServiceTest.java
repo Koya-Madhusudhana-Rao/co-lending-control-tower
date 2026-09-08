@@ -11,7 +11,6 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class ExceptionQueueServiceTest {
@@ -73,6 +72,62 @@ class ExceptionQueueServiceTest {
         assertThrows(IllegalArgumentException.class, () -> service.create(detection(source, ExceptionClassification.AMOUNT_MISMATCH)));
     }
 
+    @Test
+    void rejectsSameActorSelfApproval() {
+        ExceptionRecord exception = create(ExceptionClassification.STATUS_MISMATCH);
+        AppendOnlyAuditTrail auditTrail = new AppendOnlyAuditTrail();
+        ExceptionOverrideService overrides = new ExceptionOverrideService(auditTrail);
+        Actor operator = new Actor("operator-1", Role.OPERATOR);
+
+        assertThrows(IllegalArgumentException.class, () -> overrides.approveStatusOverride(
+            exception, operator, new Actor("operator-1", Role.APPROVER), ExceptionStatus.RESOLVED,
+            "self approval", detectedAt));
+    }
+
+    @Test
+    void validTwoActorOverrideProducesFullBeforeAndAfterSnapshots() {
+        ExceptionRecord exception = create(ExceptionClassification.AMOUNT_MISMATCH);
+        AppendOnlyAuditTrail auditTrail = new AppendOnlyAuditTrail();
+        ExceptionOverrideService overrides = new ExceptionOverrideService(auditTrail);
+
+        OverrideResult result = overrides.approveStatusOverride(
+            exception, new Actor("operator-2", Role.OPERATOR), new Actor("approver-1", Role.APPROVER),
+            ExceptionStatus.RESOLVED, "Finance confirmed corrected amount", detectedAt);
+
+        assertEquals(1, auditTrail.entries().size());
+        assertEquals(exception.exceptionId(), result.auditEntry().beforeState().exceptionId());
+        assertEquals("100.00", result.auditEntry().beforeState().amountInr().toPlainString());
+        assertEquals(2, result.auditEntry().afterState().statusHistory().size());
+        assertEquals(ExceptionStatus.RESOLVED, result.auditEntry().afterState().statusHistory().get(1).status());
+        assertEquals("Finance confirmed corrected amount", result.auditEntry().reason());
+        assertEquals(Role.APPROVER, result.auditEntry().actor().role());
+    }
+
+    @Test
+    void rejectsBlankOverrideReason() {
+        ExceptionRecord exception = create(ExceptionClassification.DUPLICATE_EVENT);
+        ExceptionOverrideService overrides = new ExceptionOverrideService(new AppendOnlyAuditTrail());
+
+        assertThrows(IllegalArgumentException.class, () -> overrides.approveStatusOverride(
+            exception, new Actor("operator-2", Role.OPERATOR), new Actor("approver-1", Role.APPROVER),
+            ExceptionStatus.RESOLVED, " ", detectedAt));
+    }
+
+    @Test
+    void auditEntriesAreAppendOnlyAndCannotBeMutatedThroughReturnedList() {
+        ExceptionRecord exception = create(ExceptionClassification.TIMING_DIFFERENCE);
+        AppendOnlyAuditTrail auditTrail = new AppendOnlyAuditTrail();
+        ExceptionOverrideService overrides = new ExceptionOverrideService(auditTrail);
+
+        overrides.approveStatusOverride(exception, new Actor("operator-2", Role.OPERATOR),
+            new Actor("approver-1", Role.APPROVER), ExceptionStatus.RESOLVED, "Evidence reviewed", detectedAt);
+
+        List<AuditEntry> entries = auditTrail.entries();
+        assertThrows(UnsupportedOperationException.class, () -> entries.clear());
+        assertEquals(1, auditTrail.entries().size());
+        assertThrows(IllegalArgumentException.class, () -> auditTrail.append(null));
+    }
+
     private ExceptionRecord create(ExceptionClassification classification) {
         return service.create(detection(event("BUS-" + classification), classification));
     }
@@ -80,7 +135,7 @@ class ExceptionQueueServiceTest {
     private ExceptionDetection detection(CanonicalEvent source, ExceptionClassification classification) {
         return new ExceptionDetection(source, classification, List.of("source.csv#line=1"),
             "rule-" + classification, "raw evidence", CauseConfidence.INFERRED,
-            "Likely source feed issue", detectedAt);
+            "Likely source feed issue", detectedAt, new Actor("operator-1", Role.OPERATOR));
     }
 
     private CanonicalEvent event(String id) {

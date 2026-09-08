@@ -33,6 +33,7 @@ public class ExceptionQueueService {
         String owner = OWNERS.get(detection.classification());
         return new ExceptionRecord(
             exceptionId,
+            detection.actor(),
             detection.classification(),
             detection.affectedSourceRecordReferences(),
             event.getBusinessEventId(),

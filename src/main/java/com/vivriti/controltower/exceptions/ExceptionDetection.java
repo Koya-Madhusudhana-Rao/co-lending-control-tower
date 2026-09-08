@@ -13,7 +13,8 @@ public record ExceptionDetection(
     String evidence,
     CauseConfidence causeConfidence,
     String likelyCause,
-    LocalDateTime detectionTime
+    LocalDateTime detectionTime,
+    Actor actor
 ) {
     public ExceptionDetection {
         affectedSourceRecordReferences = List.copyOf(affectedSourceRecordReferences);
