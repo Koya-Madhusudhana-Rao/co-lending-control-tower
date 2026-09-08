@@ -6,5 +6,6 @@ public enum ValidationState {
     DUPLICATE,
     MISSING_REQUIRED_FIELD,
     MALFORMED_SCHEMA,
+    CONTROL_TOTAL_MISMATCH,
     LATE_ARRIVAL
 }
