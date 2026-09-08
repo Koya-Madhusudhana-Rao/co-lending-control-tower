@@ -1,10 +1,8 @@
 package com.vivriti.controltower.normalization;
 
 import com.vivriti.controltower.domain.CanonicalEvent;
-import com.vivriti.controltower.domain.IngestionState;
-import com.vivriti.controltower.domain.MatchingState;
-import com.vivriti.controltower.domain.ReconciliationState;
 import com.vivriti.controltower.domain.SourceSystem;
+import com.vivriti.controltower.domain.ValidationState;
 import com.vivriti.controltower.ingestion.FeedType;
 import com.vivriti.controltower.ingestion.IngestionRecord;
 
@@ -71,10 +69,8 @@ public class CanonicalNormalizer {
         event.setPayloadHash(sha256(record.originalRecord()));
         event.setIngestionState(record.ingestionState());
         event.setValidationState(record.validationState());
-        event.setMatchingState(record.validationState() == com.vivriti.controltower.domain.ValidationState.LATE_ARRIVAL
-            ? MatchingState.TIMING_DIFFERENCE_PENDING
-            : MatchingState.UNMATCHED);
-        event.setReconciliationState(ReconciliationState.PENDING);
+        event.setMatchingState(null);
+        event.setReconciliationState(null);
         return event;
     }
 

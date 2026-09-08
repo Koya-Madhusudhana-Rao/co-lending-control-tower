@@ -1,18 +1,19 @@
 package com.vivriti.controltower.normalization;
 
 import com.vivriti.controltower.domain.IngestionState;
-import com.vivriti.controltower.domain.MatchingState;
-import com.vivriti.controltower.domain.ReconciliationState;
 import com.vivriti.controltower.domain.ValidationState;
 import com.vivriti.controltower.ingestion.FeedType;
 import com.vivriti.controltower.ingestion.IngestionRecord;
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDateTime;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.List;
+import java.util.HexFormat;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 class CanonicalNormalizerTest {
 
@@ -21,26 +22,48 @@ class CanonicalNormalizerTest {
 
     @Test
     void normalizesAllThreeSourceSchemasWithLineage() {
-        assertEquals("ORIGINATOR", normalizer.normalize(FeedType.ORIGINATOR, List.of(record(
-            FeedType.ORIGINATOR, "INSTR-001,LOAN-001,PARA,2026-08-01T17:00:00,100.00,INR,APPROVED,BATCH-001,2026-08-01T17:05:00")), "originator.csv", cutOff).get(0).getSourceSystem().name());
-        assertEquals("LMS", normalizer.normalize(FeedType.LMS, List.of(record(
-            FeedType.LMS, "BOOK-001,LOAN-INT-001,LOAN-001,2026-08-01T17:10:00,100.00,INR,APPROVED,BATCH-001")), "lms.csv", cutOff).get(0).getSourceSystem().name());
-        assertEquals("BANK", normalizer.normalize(FeedType.BANK, List.of(record(
-            FeedType.BANK, "TXN-001,INSTR-001,2026-08-01T17:20:00,100.00,POSTED,,BATCH-001")), "bank.csv", cutOff).get(0).getSourceSystem().name());
+        var originator = normalizer.normalize(FeedType.ORIGINATOR, List.of(record(
+            FeedType.ORIGINATOR, "INSTR-001,LOAN-001,PARA,2026-08-01T17:00:00,100.00,INR,APPROVED,BATCH-001,2026-08-01T17:05:00")), "originator.csv", cutOff).get(0);
+        var lms = normalizer.normalize(FeedType.LMS, List.of(record(
+            FeedType.LMS, "BOOK-001,LOAN-INT-001,LOAN-001,2026-08-01T17:10:00,100.00,INR,APPROVED,BATCH-001")), "lms.csv", cutOff).get(0);
+        var bank = normalizer.normalize(FeedType.BANK, List.of(record(
+            FeedType.BANK, "TXN-001,INSTR-001,2026-08-01T17:20:00,100.00,POSTED,,BATCH-001")), "bank.csv", cutOff).get(0);
+
+        assertEquals("ORIGINATOR", originator.getSourceSystem().name());
+        assertEquals("INSTR-001", originator.getImmutableSourceRecordId());
+        assertEquals("DISBURSEMENT_INSTRUCTION", originator.getEventType());
+        assertEquals("LMS", lms.getSourceSystem().name());
+        assertEquals("BOOK-001", lms.getImmutableSourceRecordId());
+        assertEquals("LOAN_BOOKING", lms.getEventType());
+        assertEquals("BANK", bank.getSourceSystem().name());
+        assertEquals("TXN-001", bank.getImmutableSourceRecordId());
+        assertEquals("SETTLEMENT", bank.getEventType());
+        assertEquals("INR", bank.getCurrency());
     }
 
     @Test
-    void preservesRawLineLocationHashAndLatePendingState() {
+    void tracesCanonicalEventToExactRawRowWithHashAndLocation() throws Exception {
         String raw = "INSTR-001,LOAN-001,PARA,2026-08-01T17:00:00,100.00,INR,APPROVED,BATCH-001,2026-08-01T18:30:00";
-        var event = normalizer.normalize(FeedType.ORIGINATOR, List.of(record(FeedType.ORIGINATOR, raw, ValidationState.LATE_ARRIVAL)), "originator.csv", cutOff).get(0);
+        var event = normalizer.normalize(FeedType.ORIGINATOR, List.of(record(FeedType.ORIGINATOR, raw)), "originator.csv", cutOff).get(0);
+        String expectedHash = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+            .digest(raw.getBytes(StandardCharsets.UTF_8)));
+
+        assertEquals(IngestionState.VALIDATED, event.getIngestionState());
+        assertEquals(ValidationState.VALID, event.getValidationState());
+        assertEquals("originator.csv#line=1", event.getRawSourceLocation());
+        assertEquals(expectedHash, event.getPayloadHash());
+    }
+
+    @Test
+    void carriesLateValidationWithoutPredecidingMatchingOrReconciliation() {
+        String raw = "INSTR-001,LOAN-001,PARA,2026-08-01T17:00:00,100.00,INR,APPROVED,BATCH-001,2026-08-01T18:30:00";
+        var event = normalizer.normalize(FeedType.ORIGINATOR, List.of(record(
+            FeedType.ORIGINATOR, raw, ValidationState.LATE_ARRIVAL)), "originator.csv", cutOff).get(0);
 
         assertEquals(IngestionState.VALIDATED, event.getIngestionState());
         assertEquals(ValidationState.LATE_ARRIVAL, event.getValidationState());
-        assertEquals(MatchingState.TIMING_DIFFERENCE_PENDING, event.getMatchingState());
-        assertEquals(ReconciliationState.PENDING, event.getReconciliationState());
-        assertEquals("originator.csv#line=1", event.getRawSourceLocation());
-        assertNotNull(event.getPayloadHash());
-        assertEquals(64, event.getPayloadHash().length());
+        assertNull(event.getMatchingState());
+        assertNull(event.getReconciliationState());
     }
 
     private IngestionRecord record(FeedType feedType, String raw) {
