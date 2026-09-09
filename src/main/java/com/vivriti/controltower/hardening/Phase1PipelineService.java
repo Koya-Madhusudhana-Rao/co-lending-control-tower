@@ -52,12 +52,12 @@ public class Phase1PipelineService {
         String fingerprint = fingerprint(batch);
         PipelineSnapshot cached = completedBatches.get(fingerprint);
         if (cached != null) {
-            return new PipelineRunResult(batch.batchId(), cached, null);
+            return new PipelineRunResult(batch.batchId(), cached, null, false);
         }
         if (durableRunStore.exists(fingerprint)) {
             PipelineSnapshot persisted = durableRunStore.loadSnapshot(fingerprint);
             completedBatches.put(fingerprint, persisted);
-            return new PipelineRunResult(batch.batchId(), persisted, null);
+            return new PipelineRunResult(batch.batchId(), persisted, null, true);
         }
         try {
             List<CanonicalEvent> canonical = normalize(batch);
@@ -78,9 +78,9 @@ public class Phase1PipelineService {
             );
             durableRunStore.save(fingerprint, canonical, exceptionRecords, auditTrail.entries(), decision);
             completedBatches.put(fingerprint, snapshot);
-            return new PipelineRunResult(batch.batchId(), snapshot, null);
+            return new PipelineRunResult(batch.batchId(), snapshot, null, false);
         } catch (RuntimeException exception) {
-            return new PipelineRunResult(batch.batchId(), null, exception.getMessage());
+            return new PipelineRunResult(batch.batchId(), null, exception.getMessage(), false);
         }
     }
 

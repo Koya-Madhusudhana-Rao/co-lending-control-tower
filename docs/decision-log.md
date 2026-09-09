@@ -9,3 +9,4 @@
 - Why: It satisfies the contract's reproducible-totals requirement while protecting time for Milestones 12-14. It also makes restart-safe idempotency demonstrable without adding unused infrastructure.
 - Trade-offs: JSON files are less suitable for concurrent writers, querying, retention management, and multi-process deployment than a relational database. Atomic file replacement and deterministic fingerprints provide the Phase 1 safety boundary, but this is not a production-scale persistence design.
 - Rejected alternative: Full RDBMS persistence was deferred because its additional schema, migration, transaction, and integration-test work is disproportionate for the current case-study timeline. PostgreSQL/JPA dependencies and the unused Docker service were removed rather than left as dead infrastructure.
+- Documentation impact: Local setup now requires only JDK 17 and Maven. Docker, PostgreSQL, JPA, and Testcontainers are not prerequisites for Phase 1.

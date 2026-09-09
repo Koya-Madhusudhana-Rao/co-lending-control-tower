@@ -16,27 +16,15 @@ The system records evidence, detects mismatches, preserves lineage, and allows e
 - Java 17
 - Spring Boot 3
 - Maven
-- PostgreSQL (Docker Compose)
 - JUnit 5
-- Testcontainers
+- Durable JSON run files under `data/runs/`
 
 ## Prerequisites
 
 - JDK 17
 - Maven
-- Docker Desktop running locally
 
-## Local database
-
-```bash
-docker compose up -d
-```
-
-Then verify:
-
-```bash
-docker compose ps
-```
+No Docker or database is required for the current Phase 1 implementation. Runtime state is persisted as durable JSON files under `data/runs/<batchFingerprint>/`, and `data/` is ignored by Git.
 
 ## Run the app
 
@@ -52,4 +40,4 @@ mvn test
 
 ## Project status
 
-This repository is in the Phase 1 foundation stage.
+This repository is in the deterministic Phase 1 implementation stage. PostgreSQL/JPA infrastructure was intentionally removed after the persistence decision in `docs/decision-log.md`.

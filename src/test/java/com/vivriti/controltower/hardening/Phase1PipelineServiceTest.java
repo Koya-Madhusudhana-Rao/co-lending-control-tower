@@ -138,6 +138,21 @@ class Phase1PipelineServiceTest {
         assertEquals(1, restartedPipeline.durableRunStore().loadAuditEntries(first.batchFingerprint()).size());
     }
 
+    @Test
+    void clearingInMemoryStateRerunsSameBatchFromDiskWithoutReprocessing() throws Exception {
+        Phase1PipelineService pipeline = new Phase1PipelineService(Files.createTempDirectory("clear-state-runs"));
+        PipelineBatch batch = batch("BATCH-001", validOriginator(), validLms(), validBank(), List.of(exceptionDetection()));
+        PipelineRunResult first = pipeline.process(batch);
+
+        pipeline.clearInMemoryState();
+        PipelineRunResult second = pipeline.process(batch);
+
+        assertEquals(first.snapshot(), second.snapshot());
+        assertTrue(second.loadedFromPersistence());
+        assertEquals(1, second.snapshot().exceptionIds().size());
+        assertEquals(0, second.snapshot().auditEntryCount());
+    }
+
     private PipelineBatch batch(String id, List<String> originator, List<String> lms, List<String> bank, List<ExceptionDetection> detections) {
         return new PipelineBatch(id, originator, lms, bank, CUTOFF, detections);
     }
