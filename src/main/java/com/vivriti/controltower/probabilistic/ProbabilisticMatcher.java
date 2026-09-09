@@ -57,12 +57,17 @@ public class ProbabilisticMatcher {
         double reference = SimilarityFunctions.referenceSimilarity(originator, candidate);
         double amount = SimilarityFunctions.amountProximity(originator.getAmount(), candidate.getAmount(), config.amountBandInr());
         double timestamp = SimilarityFunctions.timestampProximity(originator.getSourceTimestamp(), candidate.getSourceTimestamp(), config.timeBandHours());
-        double partner = SimilarityFunctions.partnerAgreement(originator, candidate);
+        boolean partnerComparable = SimilarityFunctions.partnerComparable(originator, candidate);
+        double partner = partnerComparable ? SimilarityFunctions.partnerAgreement(originator, candidate) : 0.0;
+
+        // Renormalize over the components actually compared: an uncomparable partner is excluded, not scored 0.
+        double partnerWeight = partnerComparable ? config.partnerWeight() : 0.0;
         double weighted = config.referenceWeight() * reference
             + config.amountWeight() * amount
             + config.timestampWeight() * timestamp
-            + config.partnerWeight() * partner;
-        double score = config.totalWeight() == 0.0 ? 0.0 : weighted / config.totalWeight();
+            + partnerWeight * partner;
+        double denominator = config.referenceWeight() + config.amountWeight() + config.timestampWeight() + partnerWeight;
+        double score = denominator == 0.0 ? 0.0 : weighted / denominator;
         ThresholdBand band = ThresholdBand.classify(score, config.surfaceThreshold(), config.confirmationThreshold());
         return new ProbableMatchEvidence(score, new FieldScores(reference, amount, timestamp, partner),
             candidate.getImmutableSourceRecordId(), band, config.surfaceThreshold(), config.confirmationThreshold());

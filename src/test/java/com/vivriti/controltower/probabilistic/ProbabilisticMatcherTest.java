@@ -173,6 +173,40 @@ class ProbabilisticMatcherTest {
         assertNull(originator.getProbableMatchEvidence());
     }
 
+    @Test
+    void populatedEqualPartnerScoresHigherThanUnavailablePartner() {
+        ProbabilisticMatcher matcher = new ProbabilisticMatcher(defaults(true));
+        // ref=1.0, amount proximity 0.5 (gap 50 / band 100), timestamp 1.0 -> mean < 1, so a perfect partner raises it.
+        CanonicalEvent originator = originator("INSTR-1", "LOAN-1", new BigDecimal("100.00"), T);
+        originator.setSourcePartner("PARA");
+        CanonicalEvent withPartner = lms("BOOK-1", "LOAN-1", new BigDecimal("150.00"), T);
+        withPartner.setSourcePartner("PARA");
+        CanonicalEvent withoutPartner = lms("BOOK-2", "LOAN-1", new BigDecimal("150.00"), T);
+        withoutPartner.setSourcePartner(null);
+
+        double withPartnerScore = matcher.evaluate(originator, withPartner).probableScore();
+        double withoutPartnerScore = matcher.evaluate(originator, withoutPartner).probableScore();
+
+        assertTrue(withPartnerScore > withoutPartnerScore,
+            "withPartner=" + withPartnerScore + " withoutPartner=" + withoutPartnerScore);
+    }
+
+    @Test
+    void unavailablePartnerIsNotPenalizedRelativeToOtherComponents() {
+        CanonicalEvent originator = originator("INSTR-1", "LOAN-1", new BigDecimal("100.00"), T);
+        originator.setSourcePartner("PARA");
+        CanonicalEvent candidate = lms("BOOK-1", "LOAN-1", new BigDecimal("150.00"), T);
+        candidate.setSourcePartner(null);
+
+        double withPartnerWeight = new ProbabilisticMatcher(defaults(true)).evaluate(originator, candidate).probableScore();
+        double withoutPartnerWeight = new ProbabilisticMatcher(noPartnerWeight()).evaluate(originator, candidate).probableScore();
+        double refAmountTimeOnly = (0.40 * 1.0 + 0.35 * 0.5 + 0.15 * 1.0) / (0.40 + 0.35 + 0.15);
+
+        // An unavailable partner scores exactly as if the partner weight did not exist -- no penalty.
+        assertEquals(withoutPartnerWeight, withPartnerWeight, 1e-9);
+        assertEquals(refAmountTimeOnly, withPartnerWeight, 1e-9);
+    }
+
     private ReconciliationState reconciliationOrUnresolved(CanonicalEvent event) {
         return event.getReconciliationState() == null ? ReconciliationState.UNRESOLVED : event.getReconciliationState();
     }
@@ -183,6 +217,10 @@ class ProbabilisticMatcherTest {
 
     private ProbabilisticMatchConfig referenceOnly(double surface, double confirmation) {
         return new ProbabilisticMatchConfig(true, 1.0, 0.0, 0.0, 0.0, new BigDecimal("100.00"), 6.0, surface, confirmation);
+    }
+
+    private ProbabilisticMatchConfig noPartnerWeight() {
+        return new ProbabilisticMatchConfig(true, 0.40, 0.35, 0.15, 0.0, new BigDecimal("100.00"), 6.0, 0.50, 0.80);
     }
 
     private CanonicalEvent originator(String id, String loanRef, BigDecimal amount, LocalDateTime timestamp) {

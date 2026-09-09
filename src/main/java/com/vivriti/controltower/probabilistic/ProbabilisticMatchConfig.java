@@ -40,10 +40,6 @@ public record ProbabilisticMatchConfig(
         );
     }
 
-    public double totalWeight() {
-        return referenceWeight + amountWeight + timestampWeight + partnerWeight;
-    }
-
     private static String get(Properties properties, String key) {
         String value = properties.getProperty(key);
         if (value == null) {

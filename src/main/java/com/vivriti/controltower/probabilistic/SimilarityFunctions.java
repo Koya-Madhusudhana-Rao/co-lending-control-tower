@@ -43,6 +43,11 @@ final class SimilarityFunctions {
         return pa != null && pa.equals(pb) ? 1.0 : 0.0;
     }
 
+    /** Partner can only be compared when both sides carry a partner; otherwise the component is excluded from scoring. */
+    static boolean partnerComparable(CanonicalEvent a, CanonicalEvent b) {
+        return a.getSourcePartner() != null && b.getSourcePartner() != null;
+    }
+
     static double normalizedSimilarity(String a, String b) {
         if (a == null || b == null) {
             return 0.0;
