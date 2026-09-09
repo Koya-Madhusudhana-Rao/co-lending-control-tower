@@ -10,3 +10,14 @@ reconciliation:
     absoluteThresholdInr: 10000
     relativeThresholdRate: 0.005
     holdFormula: "unresolvedINR > min(10000, 0.005 * batchTotalINR)"
+  probabilistic:
+    enabled: false
+    weights:
+      reference: 0.40
+      amount: 0.35
+      timestamp: 0.15
+      partner: 0.10
+    amountBandInr: 100.00
+    timeBandHours: 6
+    surfaceThreshold: 0.50
+    confirmationThreshold: 0.80

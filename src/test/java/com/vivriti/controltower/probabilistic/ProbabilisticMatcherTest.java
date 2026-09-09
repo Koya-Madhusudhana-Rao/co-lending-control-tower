@@ -1,0 +1,207 @@
+package com.vivriti.controltower.probabilistic;
+
+import com.vivriti.controltower.domain.CanonicalEvent;
+import com.vivriti.controltower.domain.MatchingState;
+import com.vivriti.controltower.domain.ProbableMatchEvidence;
+import com.vivriti.controltower.domain.ReconciliationState;
+import com.vivriti.controltower.domain.SourceSystem;
+import com.vivriti.controltower.domain.ThresholdBand;
+import org.junit.jupiter.api.Test;
+
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+class ProbabilisticMatcherTest {
+
+    private static final LocalDateTime T = LocalDateTime.of(2026, 8, 1, 10, 0);
+
+    @Test
+    void sameInputProducesSameScore() {
+        ProbabilisticMatcher matcher = new ProbabilisticMatcher(defaults(true));
+        CanonicalEvent originator = originator("INSTR-1", "LOAN-1", new BigDecimal("100.00"), T);
+        CanonicalEvent candidate = lms("BOOK-1", "LOAN-1", new BigDecimal("101.00"), T.plusMinutes(10));
+
+        ProbableMatchEvidence first = matcher.evaluate(originator, candidate);
+        ProbableMatchEvidence second = matcher.evaluate(originator, candidate);
+
+        assertEquals(first.probableScore(), second.probableScore());
+        assertEquals(first.contributingFieldScores(), second.contributingFieldScores());
+    }
+
+    @Test
+    void scoreIsBoundedBetweenZeroAndOne() {
+        ProbabilisticMatcher matcher = new ProbabilisticMatcher(defaults(true));
+        CanonicalEvent originator = originator("INSTR-1", "LOAN-1", new BigDecimal("100.00"), T);
+        CanonicalEvent aligned = lms("BOOK-1", "LOAN-1", new BigDecimal("100.00"), T);
+        CanonicalEvent disjoint = lms("BOOK-2", "ZZZZ-9", new BigDecimal("999999.00"), T.plusDays(30));
+
+        double high = matcher.evaluate(originator, aligned).probableScore();
+        double low = matcher.evaluate(originator, disjoint).probableScore();
+
+        assertTrue(high >= 0.0 && high <= 1.0, "high=" + high);
+        assertTrue(low >= 0.0 && low <= 1.0, "low=" + low);
+        assertTrue(high > low);
+    }
+
+    @Test
+    void bandBoundaryAtSurfaceThreshold() {
+        // reference-only weighting makes the score equal to the reference similarity.
+        ProbabilisticMatcher matcher = new ProbabilisticMatcher(referenceOnly(0.50, 0.80));
+        CanonicalEvent originator = originator("INSTR-1", null, null, null);
+        originator.setPartnerLoanReference("AB");
+
+        CanonicalEvent atThreshold = lms("BOOK-1", null, null, null); // sim("AB","AC") = 0.5
+        atThreshold.setPartnerLoanReference("AC");
+        CanonicalEvent belowThreshold = lms("BOOK-2", null, null, null); // sim("AB","XY") = 0.0
+        belowThreshold.setPartnerLoanReference("XY");
+
+        assertEquals(0.5, matcher.evaluate(originator, atThreshold).probableScore());
+        assertEquals(ThresholdBand.PROBABLE_UNRESOLVED, matcher.evaluate(originator, atThreshold).thresholdBand());
+        assertEquals(ThresholdBand.NOT_SURFACED, matcher.evaluate(originator, belowThreshold).thresholdBand());
+    }
+
+    @Test
+    void bandBoundaryAtConfirmationThreshold() {
+        ProbabilisticMatcher matcher = new ProbabilisticMatcher(referenceOnly(0.50, 0.80));
+        CanonicalEvent originator = originator("INSTR-1", null, null, null);
+        originator.setPartnerLoanReference("ABCDE");
+
+        CanonicalEvent atConfirmation = lms("BOOK-1", null, null, null); // sim = 0.8
+        atConfirmation.setPartnerLoanReference("ABCDX");
+        CanonicalEvent justBelow = lms("BOOK-2", null, null, null); // sim("ABCD","ABCX") = 0.75
+        justBelow.setPartnerLoanReference("ABCX");
+        CanonicalEvent originatorBelow = originator("INSTR-2", null, null, null);
+        originatorBelow.setPartnerLoanReference("ABCD");
+
+        assertEquals(0.8, matcher.evaluate(originator, atConfirmation).probableScore());
+        assertEquals(ThresholdBand.CONFIRMATION_ELIGIBLE, matcher.evaluate(originator, atConfirmation).thresholdBand());
+        assertEquals(ThresholdBand.PROBABLE_UNRESOLVED, matcher.evaluate(originatorBelow, justBelow).thresholdBand());
+    }
+
+    @Test
+    void scoreAnnotatesUnresolvedOriginatorAtOrAboveSurfaceThreshold() {
+        ProbabilisticMatcher matcher = new ProbabilisticMatcher(referenceOnly(0.50, 0.80));
+        CanonicalEvent originator = originator("INSTR-1", null, null, null);
+        originator.setPartnerLoanReference("AB");
+        CanonicalEvent candidate = lms("BOOK-1", null, null, null);
+        candidate.setPartnerLoanReference("AC");
+
+        List<ProbableMatch> surfaced = matcher.score(List.of(originator, candidate));
+
+        assertEquals(1, surfaced.size());
+        assertEquals(MatchingState.PROBABLE_MATCH, originator.getMatchingState());
+        assertEquals("BOOK-1", originator.getProbableMatchEvidence().matchedCandidateReference());
+        assertEquals(ReconciliationState.UNRESOLVED, reconciliationOrUnresolved(originator));
+    }
+
+    @Test
+    void scoreDoesNotAnnotateBelowSurfaceThreshold() {
+        ProbabilisticMatcher matcher = new ProbabilisticMatcher(referenceOnly(0.50, 0.80));
+        CanonicalEvent originator = originator("INSTR-1", null, null, null);
+        originator.setPartnerLoanReference("AB");
+        CanonicalEvent candidate = lms("BOOK-1", null, null, null);
+        candidate.setPartnerLoanReference("XY");
+
+        List<ProbableMatch> surfaced = matcher.score(List.of(originator, candidate));
+
+        assertTrue(surfaced.isEmpty());
+        assertNull(originator.getMatchingState());
+        assertNull(originator.getProbableMatchEvidence());
+    }
+
+    @Test
+    void level1MatchedRecordIsNeverACandidateOrOriginator() {
+        ProbabilisticMatcher matcher = new ProbabilisticMatcher(referenceOnly(0.50, 0.80));
+        CanonicalEvent matchedOriginator = originator("INSTR-1", null, null, null);
+        matchedOriginator.setPartnerLoanReference("AB");
+        matchedOriginator.setMatchingState(MatchingState.EXACT_MATCH);
+        CanonicalEvent matchedCandidate = lms("BOOK-1", null, null, null);
+        matchedCandidate.setPartnerLoanReference("AC");
+        matchedCandidate.setMatchingState(MatchingState.EXACT_MATCH);
+
+        List<ProbableMatch> surfaced = matcher.score(List.of(matchedOriginator, matchedCandidate));
+
+        assertTrue(surfaced.isEmpty());
+        assertEquals(MatchingState.EXACT_MATCH, matchedOriginator.getMatchingState());
+    }
+
+    @Test
+    void timingPendingCandidateIsExcluded() {
+        ProbabilisticMatcher matcher = new ProbabilisticMatcher(referenceOnly(0.50, 0.80));
+        CanonicalEvent originator = originator("INSTR-1", null, null, null);
+        originator.setPartnerLoanReference("AB");
+        CanonicalEvent pendingCandidate = lms("BOOK-1", null, null, null);
+        pendingCandidate.setPartnerLoanReference("AC");
+        pendingCandidate.setMatchingState(MatchingState.TIMING_DIFFERENCE_PENDING);
+
+        List<ProbableMatch> surfaced = matcher.score(List.of(originator, pendingCandidate));
+
+        assertTrue(surfaced.isEmpty());
+        assertNull(originator.getMatchingState());
+    }
+
+    @Test
+    void highestScoringCandidateIsChosenWithDeterministicIdTiebreak() {
+        ProbabilisticMatcher matcher = new ProbabilisticMatcher(referenceOnly(0.50, 0.80));
+        CanonicalEvent originator = originator("INSTR-1", null, null, null);
+        originator.setPartnerLoanReference("AB");
+        CanonicalEvent tieHigh = lms("BOOK-9", null, null, null);
+        tieHigh.setPartnerLoanReference("AB"); // sim 1.0
+        CanonicalEvent tieLow = lms("BOOK-1", null, null, null);
+        tieLow.setPartnerLoanReference("AB"); // sim 1.0, same score, lower id
+
+        matcher.score(List.of(originator, tieHigh, tieLow));
+
+        assertEquals("BOOK-1", originator.getProbableMatchEvidence().matchedCandidateReference());
+    }
+
+    @Test
+    void disabledConfigProducesNoResultsAndNoMutation() {
+        ProbabilisticMatcher matcher = new ProbabilisticMatcher(defaults(false));
+        CanonicalEvent originator = originator("INSTR-1", "LOAN-1", new BigDecimal("100.00"), T);
+        CanonicalEvent candidate = lms("BOOK-1", "LOAN-1", new BigDecimal("100.00"), T);
+
+        List<ProbableMatch> surfaced = matcher.score(List.of(originator, candidate));
+
+        assertTrue(surfaced.isEmpty());
+        assertNull(originator.getMatchingState());
+        assertNull(originator.getProbableMatchEvidence());
+    }
+
+    private ReconciliationState reconciliationOrUnresolved(CanonicalEvent event) {
+        return event.getReconciliationState() == null ? ReconciliationState.UNRESOLVED : event.getReconciliationState();
+    }
+
+    private ProbabilisticMatchConfig defaults(boolean enabled) {
+        return new ProbabilisticMatchConfig(enabled, 0.40, 0.35, 0.15, 0.10, new BigDecimal("100.00"), 6.0, 0.50, 0.80);
+    }
+
+    private ProbabilisticMatchConfig referenceOnly(double surface, double confirmation) {
+        return new ProbabilisticMatchConfig(true, 1.0, 0.0, 0.0, 0.0, new BigDecimal("100.00"), 6.0, surface, confirmation);
+    }
+
+    private CanonicalEvent originator(String id, String loanRef, BigDecimal amount, LocalDateTime timestamp) {
+        return event(SourceSystem.ORIGINATOR, id, loanRef, amount, timestamp);
+    }
+
+    private CanonicalEvent lms(String id, String loanRef, BigDecimal amount, LocalDateTime timestamp) {
+        return event(SourceSystem.LMS, id, loanRef, amount, timestamp);
+    }
+
+    private CanonicalEvent event(SourceSystem system, String id, String loanRef, BigDecimal amount, LocalDateTime timestamp) {
+        CanonicalEvent event = new CanonicalEvent();
+        event.setSourceSystem(system);
+        event.setImmutableSourceRecordId(id);
+        event.setPartnerLoanReference(loanRef);
+        event.setLoanId(loanRef);
+        event.setAmount(amount);
+        event.setCurrency("INR");
+        event.setSourceTimestamp(timestamp);
+        return event;
+    }
+}

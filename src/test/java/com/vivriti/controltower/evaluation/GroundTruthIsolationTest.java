@@ -16,7 +16,7 @@ class GroundTruthIsolationTest {
 
     private static final Path RUNTIME_ROOT = Path.of("src", "main", "java", "com", "vivriti", "controltower");
     private static final List<String> RUNTIME_PACKAGES = List.of(
-        "ingestion", "normalization", "matching", "exceptions", "close", "hardening", "domain");
+        "ingestion", "normalization", "matching", "exceptions", "close", "hardening", "domain", "probabilistic");
 
     @Test
     void runtimeReconciliationPackagesDoNotImportEvaluationOrGroundTruthReader() throws IOException {

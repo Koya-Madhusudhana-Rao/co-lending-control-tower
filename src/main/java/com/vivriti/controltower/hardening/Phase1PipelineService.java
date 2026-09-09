@@ -17,6 +17,8 @@ import com.vivriti.controltower.ingestion.IngestionBatchResult;
 import com.vivriti.controltower.matching.CompositeAndTimingMatcher;
 import com.vivriti.controltower.matching.ExactReconciliationMatcher;
 import com.vivriti.controltower.normalization.CanonicalNormalizer;
+import com.vivriti.controltower.probabilistic.ProbabilisticMatchConfig;
+import com.vivriti.controltower.probabilistic.ProbabilisticMatcher;
 
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
@@ -38,6 +40,7 @@ public class Phase1PipelineService {
     private final ExceptionMaterializer materializer = new ExceptionMaterializer();
     private final CloseHoldService closeHold;
     private final DurableRunStore durableRunStore;
+    private final ProbabilisticMatcher probabilisticMatcher;
     private final AppendOnlyAuditTrail auditTrail = new AppendOnlyAuditTrail();
     private final Map<String, PipelineSnapshot> completedBatches = new java.util.HashMap<>();
 
@@ -46,10 +49,15 @@ public class Phase1PipelineService {
     }
 
     public Phase1PipelineService(Path runsRoot) {
+        this(runsRoot, ProbabilisticMatchConfig.fromConfig(Path.of("config", "reconciliation.yml")));
+    }
+
+    public Phase1PipelineService(Path runsRoot, ProbabilisticMatchConfig probabilisticConfig) {
         CloseHoldPolicy policy = CloseHoldPolicy.fromConfig(Path.of("config", "reconciliation.yml"));
         this.exactMatcher = new ExactReconciliationMatcher(new BigDecimal("1.00"));
         this.closeHold = new CloseHoldService(policy);
         this.durableRunStore = new DurableRunStore(runsRoot);
+        this.probabilisticMatcher = new ProbabilisticMatcher(probabilisticConfig);
     }
 
     public synchronized PipelineRunResult process(PipelineBatch batch) {
@@ -76,6 +84,8 @@ public class Phase1PipelineService {
                 .map(CanonicalEvent::getAmount)
                 .filter(java.util.Objects::nonNull).reduce(BigDecimal.ZERO, BigDecimal::add);
             CloseHoldDecision decision = closeHold.decide(batchTotal, canonical, exceptionRecords);
+            // Level 4 runs after the close/hold decision so probabilistic annotations never alter Phase 1 financial state; no-op when disabled.
+            probabilisticMatcher.score(canonical);
             PipelineSnapshot snapshot = new PipelineSnapshot(
                 fingerprint,
                 canonical.stream().map(this::canonicalFingerprint).sorted().toList(),

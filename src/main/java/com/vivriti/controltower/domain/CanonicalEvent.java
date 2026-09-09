@@ -33,6 +33,7 @@ public class CanonicalEvent {
     private MatchingState matchingState;
     private ReconciliationState reconciliationState;
     private ExceptionState exceptionState;
+    private ProbableMatchEvidence probableMatchEvidence;
 
     public CanonicalEvent() {
     }
@@ -259,5 +260,15 @@ public class CanonicalEvent {
 
     public void setExceptionState(ExceptionState exceptionState) {
         this.exceptionState = exceptionState;
+    }
+
+    // Level 4 probabilistic evidence is in-memory only; excluded from the durable snapshot to keep disabled-mode output byte-identical to Phase 1.
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    public ProbableMatchEvidence getProbableMatchEvidence() {
+        return probableMatchEvidence;
+    }
+
+    public void setProbableMatchEvidence(ProbableMatchEvidence probableMatchEvidence) {
+        this.probableMatchEvidence = probableMatchEvidence;
     }
 }
