@@ -88,6 +88,36 @@ public class DurableRunStore {
         return read(batchFingerprint, "audit-entries.json");
     }
 
+    public List<CanonicalEvent> loadCanonicalRecords(String batchFingerprint) {
+        return readList(batchFingerprint, "canonical-records.json", CanonicalEvent.class);
+    }
+
+    public List<ExceptionRecord> loadExceptions(String batchFingerprint) {
+        return readList(batchFingerprint, "exception-records.json", ExceptionRecord.class);
+    }
+
+    public List<AuditEntry> loadAudits(String batchFingerprint) {
+        return readList(batchFingerprint, "audit-entries.json", AuditEntry.class);
+    }
+
+    public CloseHoldDecision loadDecision(String batchFingerprint) {
+        try {
+            return objectMapper.readValue(
+                runDirectory(batchFingerprint).resolve("close-hold-decision.json").toFile(), CloseHoldDecision.class);
+        } catch (IOException exception) {
+            throw new IllegalStateException("Could not load close-hold decision " + batchFingerprint, exception);
+        }
+    }
+
+    private <T> List<T> readList(String batchFingerprint, String filename, Class<T> type) {
+        try {
+            return objectMapper.readValue(runDirectory(batchFingerprint).resolve(filename).toFile(),
+                objectMapper.getTypeFactory().constructCollectionType(List.class, type));
+        } catch (IOException exception) {
+            throw new IllegalStateException("Could not load " + filename, exception);
+        }
+    }
+
     private JsonNode read(String batchFingerprint, String filename) {
         try {
             return objectMapper.readTree(runDirectory(batchFingerprint).resolve(filename).toFile());

@@ -262,8 +262,6 @@ public class CanonicalEvent {
         this.exceptionState = exceptionState;
     }
 
-    // Level 4 probabilistic evidence is in-memory only; excluded from the durable snapshot to keep disabled-mode output byte-identical to Phase 1.
-    @com.fasterxml.jackson.annotation.JsonIgnore
     public ProbableMatchEvidence getProbableMatchEvidence() {
         return probableMatchEvidence;
     }
