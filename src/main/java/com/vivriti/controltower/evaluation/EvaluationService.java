@@ -19,9 +19,9 @@ public class EvaluationService {
         List<CanonicalEvent> originators = input.canonicalEvents().stream()
             .filter(event -> event.getSourceSystem() == SourceSystem.ORIGINATOR)
             .toList();
-        Set<String> anomalyInstructionIds = new HashSet<>();
+        java.util.Map<String, String> anomalyTypesByInstructionId = new java.util.HashMap<>();
         for (GroundTruthRecord record : groundTruth) {
-            anomalyInstructionIds.add(record.instructionId());
+            anomalyTypesByInstructionId.put(record.instructionId(), record.anomalyType());
         }
         Set<String> exceptionBusinessEventIds = new HashSet<>();
         for (ExceptionRecord exception : input.exceptions()) {
@@ -60,7 +60,8 @@ public class EvaluationService {
 
             if (matched) {
                 matchedInr = matchedInr.add(amount);
-                if (anomalyInstructionIds.contains(event.getBusinessEventId())) {
+                String anomalyType = anomalyTypesByInstructionId.get(event.getBusinessEventId());
+                if (anomalyType != null && !isExpectedResolution(anomalyType, event.getMatchingState())) {
                     falseMatchCount++;
                     falseMatchInr = falseMatchInr.add(amount);
                     falseMatchReferences.add(event.getBusinessEventId());
@@ -89,5 +90,9 @@ public class EvaluationService {
             exceptionCoverageRate, straightThroughRate, controlTotalIntegrity,
             batchTotalInr, matchedInr, pendingInr, unresolvedInr, List.copyOf(unresolvedReferences)
         );
+    }
+
+    private boolean isExpectedResolution(String anomalyType, MatchingState matchingState) {
+        return "COMPOSITE_MATCH".equals(anomalyType) && matchingState == MatchingState.COMPOSITE_MATCH;
     }
 }
