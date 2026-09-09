@@ -66,6 +66,26 @@ class ExactReconciliationMatcherTest {
     }
 
     @Test
+    void leavesEventsUnsetWhenSourceStatusesDisagree() {
+        CanonicalEvent originator = event(SourceSystem.ORIGINATOR, "INSTR-001", "LOAN-001", "LOAN-001", "100.00", "INR");
+        CanonicalEvent lms = event(SourceSystem.LMS, "BOOK-001", "LOAN-INT-001", "LOAN-001", "100.00", "INR");
+        CanonicalEvent bank = event(SourceSystem.BANK, "TXN-001", "INSTR-001", "INSTR-001", "100.00", "INR");
+        lms.setSourceStatus("BOOKING_REVIEW");
+
+        assertNoMatch(originator, lms, bank);
+    }
+
+    @Test
+    void leavesLateArrivalRecordsUnsetForTimingLevel() {
+        CanonicalEvent originator = event(SourceSystem.ORIGINATOR, "INSTR-001", "LOAN-001", "LOAN-001", "100.00", "INR");
+        CanonicalEvent lms = event(SourceSystem.LMS, "BOOK-001", "LOAN-INT-001", "LOAN-001", "100.00", "INR");
+        CanonicalEvent bank = event(SourceSystem.BANK, "TXN-001", "INSTR-001", "INSTR-001", "100.00", "INR");
+        originator.setValidationState(ValidationState.LATE_ARRIVAL);
+
+        assertNoMatch(originator, lms, bank);
+    }
+
+    @Test
     void leavesEventsUnsetWhenIdentifierCannotLinkSources() {
         CanonicalEvent originator = event(SourceSystem.ORIGINATOR, null, "LOAN-001", "LOAN-001", "100.00", "INR");
         CanonicalEvent lms = event(SourceSystem.LMS, "BOOK-001", "LOAN-INT-001", "LOAN-001", "100.00", "INR");
@@ -99,6 +119,7 @@ class ExactReconciliationMatcherTest {
         event.setEventType(source == SourceSystem.ORIGINATOR
             ? "DISBURSEMENT_INSTRUCTION"
             : source == SourceSystem.LMS ? "LOAN_BOOKING" : "SETTLEMENT");
+        event.setSourceStatus(source == SourceSystem.BANK ? "POSTED" : "APPROVED");
         event.setIngestionState(IngestionState.VALIDATED);
         event.setValidationState(ValidationState.VALID);
         return event;

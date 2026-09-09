@@ -4,6 +4,7 @@ import com.vivriti.controltower.domain.CanonicalEvent;
 import com.vivriti.controltower.domain.MatchingState;
 import com.vivriti.controltower.domain.ReconciliationState;
 import com.vivriti.controltower.domain.SourceSystem;
+import com.vivriti.controltower.domain.ValidationState;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -39,8 +40,10 @@ public class ExactReconciliationMatcher {
 
             CanonicalEvent lms = lmsCandidates.get(0);
             CanonicalEvent bank = bankCandidates.get(0);
-            if (!compatible(originator, lms) || !compatible(originator, bank)
+            if (!validForExact(originator, lms, bank)
+                || !compatible(originator, lms) || !compatible(originator, bank)
                 || !compatible(lms, bank) || !compatibleEventTypes(originator, lms, bank)
+                || !compatibleStatuses(originator, lms, bank)
                 || !expectedRelationshipsAgree(originator, lms, bank)) {
                 continue;
             }
@@ -64,6 +67,12 @@ public class ExactReconciliationMatcher {
             && first.getAmount().subtract(second.getAmount()).abs().compareTo(amountToleranceInr) <= 0;
     }
 
+    private boolean validForExact(CanonicalEvent originator, CanonicalEvent lms, CanonicalEvent bank) {
+        return originator.getValidationState() == ValidationState.VALID
+            && lms.getValidationState() == ValidationState.VALID
+            && bank.getValidationState() == ValidationState.VALID;
+    }
+
     private boolean expectedRelationshipsAgree(CanonicalEvent originator, CanonicalEvent lms, CanonicalEvent bank) {
         return originator.getBusinessEventId() != null
             && originator.getPartnerLoanReference() != null
@@ -77,6 +86,12 @@ public class ExactReconciliationMatcher {
         return "DISBURSEMENT_INSTRUCTION".equals(originator.getEventType())
             && "LOAN_BOOKING".equals(lms.getEventType())
             && ("SETTLEMENT".equals(bank.getEventType()) || "SETTLEMENT_REVERSAL".equals(bank.getEventType()));
+    }
+
+    private boolean compatibleStatuses(CanonicalEvent originator, CanonicalEvent lms, CanonicalEvent bank) {
+        return originator.getSourceStatus() != null
+            && originator.getSourceStatus().equals(lms.getSourceStatus())
+            && "POSTED".equals(bank.getSourceStatus());
     }
 
     private List<CanonicalEvent> eventsOf(List<CanonicalEvent> events, SourceSystem sourceSystem) {
