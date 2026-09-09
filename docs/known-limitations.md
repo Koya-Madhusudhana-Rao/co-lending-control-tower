@@ -22,3 +22,9 @@ These are accepted Phase 1 limitations, documented rather than fixed now.
 - These references are accurate and traceable back to the exact source row, so this is a readability limitation, not a correctness defect.
 - Mapping blocking references to human-readable instruction IDs for the close/hold output is a documented future polish item, not a Phase 1 requirement.
 
+## Probabilistic candidacy: small residual false-positive rate
+
+- The Phase 2 candidacy filter leaves a small residual false-positive rate (~3 records per ~2000) driven by sequential-ID lexical adjacency coinciding with a near-amount match, which lets a spurious bank leg clear the completeness threshold.
+- A human approver would reject these on inspection; they are not eliminated because the alternative fix (mutual amount-consistency between legs) would risk miscategorizing the genuine `AMOUNT_MISMATCH` discrepancy residual, a worse trade-off than a handful of noise records.
+
+

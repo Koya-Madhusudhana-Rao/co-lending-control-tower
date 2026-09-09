@@ -22,3 +22,4 @@ reconciliation:
     timeBandHours: 6
     surfaceThreshold: 0.50
     confirmationThreshold: 0.80
+    completenessThreshold: 0.80

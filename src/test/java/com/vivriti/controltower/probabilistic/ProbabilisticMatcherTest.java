@@ -89,9 +89,10 @@ class ProbabilisticMatcherTest {
         CanonicalEvent originator = originator("INSTR-1", null, null, null);
         originator.setPartnerLoanReference("AB");
         CanonicalEvent candidate = lms("BOOK-1", null, null, null);
-        candidate.setPartnerLoanReference("AC");
+        candidate.setPartnerLoanReference("AB"); // confirmation-strength LMS leg
+        CanonicalEvent bankLeg = bank("TXN-1", "AB"); // confirmation-strength bank leg completes the group
 
-        List<ProbableMatch> surfaced = matcher.score(List.of(originator, candidate));
+        List<ProbableMatch> surfaced = matcher.score(List.of(originator, candidate, bankLeg));
 
         assertEquals(1, surfaced.size());
         assertEquals(MatchingState.PROBABLE_MATCH, originator.getMatchingState());
@@ -106,8 +107,9 @@ class ProbabilisticMatcherTest {
         originator.setPartnerLoanReference("AB");
         CanonicalEvent candidate = lms("BOOK-1", null, null, null);
         candidate.setPartnerLoanReference("XY");
+        CanonicalEvent bankLeg = bank("TXN-1", "AB"); // valid bank leg; the LMS leg itself is below surface
 
-        List<ProbableMatch> surfaced = matcher.score(List.of(originator, candidate));
+        List<ProbableMatch> surfaced = matcher.score(List.of(originator, candidate, bankLeg));
 
         assertTrue(surfaced.isEmpty());
         assertNull(originator.getMatchingState());
@@ -138,8 +140,9 @@ class ProbabilisticMatcherTest {
         CanonicalEvent pendingCandidate = lms("BOOK-1", null, null, null);
         pendingCandidate.setPartnerLoanReference("AC");
         pendingCandidate.setMatchingState(MatchingState.TIMING_DIFFERENCE_PENDING);
+        CanonicalEvent bankLeg = bank("TXN-1", "AB"); // eligible bank leg; the only LMS is pending-excluded
 
-        List<ProbableMatch> surfaced = matcher.score(List.of(originator, pendingCandidate));
+        List<ProbableMatch> surfaced = matcher.score(List.of(originator, pendingCandidate, bankLeg));
 
         assertTrue(surfaced.isEmpty());
         assertNull(originator.getMatchingState());
@@ -154,10 +157,72 @@ class ProbabilisticMatcherTest {
         tieHigh.setPartnerLoanReference("AB"); // sim 1.0
         CanonicalEvent tieLow = lms("BOOK-1", null, null, null);
         tieLow.setPartnerLoanReference("AB"); // sim 1.0, same score, lower id
+        CanonicalEvent bankLeg = bank("TXN-1", "AB"); // confirmation-strength bank leg completes the group
 
-        matcher.score(List.of(originator, tieHigh, tieLow));
+        matcher.score(List.of(originator, tieHigh, tieLow, bankLeg));
 
         assertEquals("BOOK-1", originator.getProbableMatchEvidence().matchedCandidateReference());
+    }
+
+    @Test
+    void incompleteGroupWithoutBankLegIsNotScored() {
+        ProbabilisticMatcher matcher = new ProbabilisticMatcher(referenceOnly(0.50, 0.80));
+        CanonicalEvent originator = originator("INSTR-1", null, null, null);
+        originator.setPartnerLoanReference("AB");
+        CanonicalEvent lmsLeg = lms("BOOK-1", null, null, null);
+        lmsLeg.setPartnerLoanReference("AB"); // perfect LMS leg, but no bank leg exists
+
+        List<ProbableMatch> surfaced = matcher.score(List.of(originator, lmsLeg));
+
+        assertTrue(surfaced.isEmpty());
+        assertNull(originator.getMatchingState());
+    }
+
+    @Test
+    void reversedBankLegIsExcludedFromCandidacy() {
+        ProbabilisticMatcher matcher = new ProbabilisticMatcher(referenceOnly(0.50, 0.80));
+        CanonicalEvent originator = originator("INSTR-1", null, null, null);
+        originator.setPartnerLoanReference("AB");
+        CanonicalEvent lmsLeg = lms("BOOK-1", null, null, null);
+        lmsLeg.setPartnerLoanReference("AB");
+        CanonicalEvent reversedBank = bank("TXN-1", "AB");
+        reversedBank.setSourceStatus("REVERSED");
+
+        List<ProbableMatch> surfaced = matcher.score(List.of(originator, lmsLeg, reversedBank));
+
+        assertTrue(surfaced.isEmpty());
+        assertNull(originator.getMatchingState());
+    }
+
+    @Test
+    void reversalLinkedBankLegIsExcludedFromCandidacy() {
+        ProbabilisticMatcher matcher = new ProbabilisticMatcher(referenceOnly(0.50, 0.80));
+        CanonicalEvent originator = originator("INSTR-1", null, null, null);
+        originator.setPartnerLoanReference("AB");
+        CanonicalEvent lmsLeg = lms("BOOK-1", null, null, null);
+        lmsLeg.setPartnerLoanReference("AB");
+        CanonicalEvent reversalLinkedBank = bank("TXN-1", "AB"); // POSTED but carries reversal linkage
+        reversalLinkedBank.setReversalReference("REV-1");
+
+        List<ProbableMatch> surfaced = matcher.score(List.of(originator, lmsLeg, reversalLinkedBank));
+
+        assertTrue(surfaced.isEmpty());
+        assertNull(originator.getMatchingState());
+    }
+
+    @Test
+    void completeNonReversedGroupRemainsEligible() {
+        ProbabilisticMatcher matcher = new ProbabilisticMatcher(referenceOnly(0.50, 0.80));
+        CanonicalEvent originator = originator("INSTR-1", null, null, null);
+        originator.setPartnerLoanReference("AB");
+        CanonicalEvent lmsLeg = lms("BOOK-1", null, null, null);
+        lmsLeg.setPartnerLoanReference("AB");
+        CanonicalEvent bankLeg = bank("TXN-1", "AB"); // POSTED, no reversal linkage
+
+        List<ProbableMatch> surfaced = matcher.score(List.of(originator, lmsLeg, bankLeg));
+
+        assertEquals(1, surfaced.size());
+        assertEquals(MatchingState.PROBABLE_MATCH, originator.getMatchingState());
     }
 
     @Test
@@ -212,15 +277,15 @@ class ProbabilisticMatcherTest {
     }
 
     private ProbabilisticMatchConfig defaults(boolean enabled) {
-        return new ProbabilisticMatchConfig(enabled, 0.40, 0.35, 0.15, 0.10, new BigDecimal("100.00"), 6.0, 0.50, 0.80);
+        return new ProbabilisticMatchConfig(enabled, 0.40, 0.35, 0.15, 0.10, new BigDecimal("100.00"), 6.0, 0.50, 0.80, 0.80);
     }
 
     private ProbabilisticMatchConfig referenceOnly(double surface, double confirmation) {
-        return new ProbabilisticMatchConfig(true, 1.0, 0.0, 0.0, 0.0, new BigDecimal("100.00"), 6.0, surface, confirmation);
+        return new ProbabilisticMatchConfig(true, 1.0, 0.0, 0.0, 0.0, new BigDecimal("100.00"), 6.0, surface, confirmation, 0.80);
     }
 
     private ProbabilisticMatchConfig noPartnerWeight() {
-        return new ProbabilisticMatchConfig(true, 0.40, 0.35, 0.15, 0.0, new BigDecimal("100.00"), 6.0, 0.50, 0.80);
+        return new ProbabilisticMatchConfig(true, 0.40, 0.35, 0.15, 0.0, new BigDecimal("100.00"), 6.0, 0.50, 0.80, 0.80);
     }
 
     private CanonicalEvent originator(String id, String loanRef, BigDecimal amount, LocalDateTime timestamp) {
@@ -229,6 +294,12 @@ class ProbabilisticMatcherTest {
 
     private CanonicalEvent lms(String id, String loanRef, BigDecimal amount, LocalDateTime timestamp) {
         return event(SourceSystem.LMS, id, loanRef, amount, timestamp);
+    }
+
+    private CanonicalEvent bank(String id, String reference) {
+        CanonicalEvent event = event(SourceSystem.BANK, id, reference, new BigDecimal("100.00"), T);
+        event.setSourceStatus("POSTED");
+        return event;
     }
 
     private CanonicalEvent event(SourceSystem system, String id, String loanRef, BigDecimal amount, LocalDateTime timestamp) {

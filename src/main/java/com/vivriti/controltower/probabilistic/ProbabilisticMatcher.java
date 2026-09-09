@@ -25,31 +25,61 @@ public class ProbabilisticMatcher {
         if (!config.enabled()) {
             return List.of();
         }
+        // Candidacy filter: unresolved LMS/Bank legs that are not reversed and carry no reversal linkage.
         List<CanonicalEvent> candidates = events.stream()
             .filter(event -> event.getSourceSystem() == SourceSystem.LMS || event.getSourceSystem() == SourceSystem.BANK)
             .filter(this::isUnresolvedCandidate)
+            .filter(this::isEligibleLeg)
             .toList();
         List<ProbableMatch> surfaced = new ArrayList<>();
         for (CanonicalEvent originator : events) {
             if (originator.getSourceSystem() != SourceSystem.ORIGINATOR || !isUnresolvedCandidate(originator)) {
                 continue;
             }
-            CanonicalEvent bestCandidate = null;
-            ProbableMatchEvidence bestEvidence = null;
-            for (CanonicalEvent candidate : candidates) {
-                ProbableMatchEvidence evidence = evaluate(originator, candidate);
-                if (isBetter(evidence, candidate, bestEvidence, bestCandidate)) {
-                    bestCandidate = candidate;
-                    bestEvidence = evidence;
-                }
+            // Group completeness mirrors Level 1: require an eligible LMS leg and an eligible Bank leg that each reach
+            // the completeness threshold, above the lexical-adjacency noise floor of sequential IDs (a spurious adjacent leg scores ~0.58).
+            Scored bestLms = bestOf(originator, candidates, SourceSystem.LMS);
+            Scored bestBank = bestOf(originator, candidates, SourceSystem.BANK);
+            if (bestLms == null || bestBank == null
+                || bestLms.evidence().probableScore() < config.completenessThreshold()
+                || bestBank.evidence().probableScore() < config.completenessThreshold()) {
+                continue;
             }
-            if (bestEvidence != null && bestEvidence.probableScore() >= config.surfaceThreshold()) {
-                originator.setMatchingState(MatchingState.PROBABLE_MATCH);
-                originator.setProbableMatchEvidence(bestEvidence);
-                surfaced.add(new ProbableMatch(originator, bestCandidate, bestEvidence));
-            }
+            Scored best = isBetter(bestBank.evidence(), bestBank.candidate(), bestLms.evidence(), bestLms.candidate())
+                ? bestBank : bestLms;
+            originator.setMatchingState(MatchingState.PROBABLE_MATCH);
+            originator.setProbableMatchEvidence(best.evidence());
+            surfaced.add(new ProbableMatch(originator, best.candidate(), best.evidence()));
         }
         return List.copyOf(surfaced);
+    }
+
+    private Scored bestOf(CanonicalEvent originator, List<CanonicalEvent> candidates, SourceSystem source) {
+        CanonicalEvent bestCandidate = null;
+        ProbableMatchEvidence bestEvidence = null;
+        for (CanonicalEvent candidate : candidates) {
+            if (candidate.getSourceSystem() != source) {
+                continue;
+            }
+            ProbableMatchEvidence evidence = evaluate(originator, candidate);
+            if (isBetter(evidence, candidate, bestEvidence, bestCandidate)) {
+                bestCandidate = candidate;
+                bestEvidence = evidence;
+            }
+        }
+        return bestCandidate == null ? null : new Scored(bestCandidate, bestEvidence);
+    }
+
+    /** A candidate leg is ineligible if it is reversed or carries reversal linkage; deterministic, never scored. */
+    private boolean isEligibleLeg(CanonicalEvent leg) {
+        if ("REVERSED".equals(leg.getSourceStatus())) {
+            return false;
+        }
+        String reversalReference = leg.getReversalReference();
+        return reversalReference == null || reversalReference.isBlank();
+    }
+
+    private record Scored(CanonicalEvent candidate, ProbableMatchEvidence evidence) {
     }
 
     /** Pure scoring of one candidate pair; independent of the enabled flag and free of side effects. */

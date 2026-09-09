@@ -54,11 +54,11 @@ class ProbabilisticPipelineIntegrationTest {
     }
 
     private ProbabilisticMatchConfig disabled() {
-        return new ProbabilisticMatchConfig(false, 0.40, 0.35, 0.15, 0.10, new BigDecimal("100.00"), 6.0, 0.50, 0.80);
+        return new ProbabilisticMatchConfig(false, 0.40, 0.35, 0.15, 0.10, new BigDecimal("100.00"), 6.0, 0.50, 0.80, 0.80);
     }
 
     private ProbabilisticMatchConfig enabled() {
-        return new ProbabilisticMatchConfig(true, 0.40, 0.35, 0.15, 0.10, new BigDecimal("100.00"), 6.0, 0.50, 0.80);
+        return new ProbabilisticMatchConfig(true, 0.40, 0.35, 0.15, 0.10, new BigDecimal("100.00"), 6.0, 0.50, 0.80, 0.80);
     }
 
     private List<String> dataLines(Path path) throws Exception {

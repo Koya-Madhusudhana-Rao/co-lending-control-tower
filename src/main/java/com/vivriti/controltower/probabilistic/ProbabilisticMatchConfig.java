@@ -17,7 +17,8 @@ public record ProbabilisticMatchConfig(
     BigDecimal amountBandInr,
     double timeBandHours,
     double surfaceThreshold,
-    double confirmationThreshold
+    double confirmationThreshold,
+    double completenessThreshold
 ) {
     public static ProbabilisticMatchConfig fromConfig(Path configPath) {
         YamlPropertiesFactoryBean yaml = new YamlPropertiesFactoryBean();
@@ -36,7 +37,8 @@ public record ProbabilisticMatchConfig(
             new BigDecimal(get(properties, "reconciliation.probabilistic.amountBandInr")),
             Double.parseDouble(get(properties, "reconciliation.probabilistic.timeBandHours")),
             Double.parseDouble(get(properties, "reconciliation.probabilistic.surfaceThreshold")),
-            Double.parseDouble(get(properties, "reconciliation.probabilistic.confirmationThreshold"))
+            Double.parseDouble(get(properties, "reconciliation.probabilistic.confirmationThreshold")),
+            Double.parseDouble(get(properties, "reconciliation.probabilistic.completenessThreshold"))
         );
     }
 

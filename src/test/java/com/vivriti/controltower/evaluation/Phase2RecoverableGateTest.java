@@ -61,7 +61,7 @@ class Phase2RecoverableGateTest {
     }
 
     private ProbabilisticMatchConfig enabled() {
-        return new ProbabilisticMatchConfig(true, 0.40, 0.35, 0.15, 0.10, new BigDecimal("100.00"), 6.0, 0.50, 0.80);
+        return new ProbabilisticMatchConfig(true, 0.40, 0.35, 0.15, 0.10, new BigDecimal("100.00"), 6.0, 0.50, 0.80, 0.80);
     }
 
     private double referenceMismatchRate() {
