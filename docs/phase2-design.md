@@ -1,7 +1,8 @@
 # Phase 2 design — probabilistic matching (Level 4)
 
-> Status: **APPROVED design, not yet implemented**. This document is the reviewed Phase 2 design.
-> Implementation (Milestone 15b) is a separate, gated milestone and is not part of this commit.
+> Status: **IMPLEMENTED (Milestones 15b–15d)**. The reviewed 15a design is retained below and
+> annotated where implementation refined it — the partner-component renormalization (§2) and the
+> candidacy filter (§1). Final measured numbers are in §9.
 > Phase 2 is probabilistic matching only, per MASTER_PROMPT.md §5. It is read-only with respect to
 > financial state except through an explicit, audited human confirmation.
 
@@ -33,6 +34,26 @@ Candidate pairing (deterministic): for each **unresolved Originator** event (aut
 disbursement intent), the scorer forms candidate pairs against **unresolved LMS and Bank** events
 only. An event already consumed by a Level 1/2/3 match is never a candidate. This guarantees Phase 2
 can only ever *add* information about the leftover population, never disturb a settled match.
+
+### Candidacy eligibility (candidacy filter, added in 15d)
+
+Before the scoring formula runs, a deterministic candidacy pre-filter gates the population, mirroring
+Level 1's 3-way requirement. It does not change the four component functions or weights.
+
+1. **Reversal/status exclusion (applied first).** A candidate leg with `sourceStatus = REVERSED` or a
+   populated `reversalReference` is excluded from candidacy entirely (never scored) — a deterministic
+   signal already on the canonical record.
+2. **Group completeness.** An originator is scored only if, on the remaining eligible legs, it has
+   both an LMS leg and a Bank leg that each reach `completenessThreshold`. A single intact leg (e.g.
+   an LMS booking with no bank settlement, or whose bank was reversed) is not recoverable — there is
+   nothing to reconcile into.
+
+`completenessThreshold` (config, default 0.80) is a **separate** gate from `confirmationThreshold`:
+candidacy eligibility and promotion eligibility are different concerns and are tuned independently.
+The bar sits above the sequential-ID lexical-adjacency noise floor — a numerically-adjacent but
+unrelated leg scores ~0.58 on reference similarity, a real counterpart ~0.93 — so it separates
+genuine legs from spurious ones. A small residual (~3 per 2000) remains; see
+[known-limitations.md](known-limitations.md).
 
 ## 2. Scoring model
 
@@ -82,6 +103,7 @@ reconciliation:
     timeBandHours: 6          # timestamp closeness decays to 0 beyond this band
     surfaceThreshold: 0.50    # below -> NOT surfaced as probable; stays plain UNRESOLVED
     confirmationThreshold: 0.80  # at/above -> PROBABLE_MATCH eligible for human confirmation
+    completenessThreshold: 0.80  # per-leg candidacy bar; both LMS and Bank legs must reach it (15d)
 ```
 
 | Band | Condition | Outcome |
@@ -215,3 +237,40 @@ Items flagged in the draft, and their resolution in this approved design.
   defaults to be **tuned on Seed A and then frozen before Seed B** (§7.3). They are configuration,
   not code, and are not finalized silently — the tuned values will be reported with the Phase 2
   evaluation for sign-off.
+
+## 9. Implementation outcomes (final, measured)
+
+Frozen config used for both seeds: weights `0.40 / 0.35 / 0.15 / 0.10`, `amountBandInr = 100.00`,
+`timeBandHours = 6`, `surfaceThreshold = 0.50`, `confirmationThreshold = 0.80`,
+`completenessThreshold = 0.80`. The generator injects a `REFERENCE_MISMATCH` class
+(`referenceMismatchRate = 0.03`) so a genuinely recoverable population exists; the recoverable-pair
+gate (§7.1) cleared at 42 (Seed A) / 53 (Seed B) true positives.
+
+Precision/recall (positives = `REFERENCE_MISMATCH` recovered to the true same-index counterpart):
+
+| Metric | Seed A (12345, tune) | Seed B (67890, frozen) |
+|---|---:|---:|
+| Unresolved originators | 178 | 188 |
+| Recoverable positives | 42 | 53 |
+| Recoverable INR | ₹1,829,591 | ₹2,381,350 |
+| True positives | 42 | 53 |
+| False positives | 42 | 45 |
+| **Precision** | **0.500** | **0.541** |
+| **Recall** | **1.000** | **1.000** |
+
+- **Recall 1.0** on both: every reference-mismatch is recovered to its true counterpart.
+- **Precision ~0.50** is bounded by the honest residual: the false positives are almost entirely
+  genuine `AMOUNT_MISMATCH` / `STATUS_MISMATCH` discrepancies (correct counterpart identified, but the
+  case should stay an exception) plus ~3/2000 lexical-adjacency noise records. These are correctly
+  surfaced for **human review** — the mandatory confirmation workflow (§5) is exactly what turns this
+  precision into a safe control rather than an auto-decision.
+- **Threshold sensitivity is flat** (0.50–0.90): every surfaced record scores ≥ 0.9, so the
+  confirmation threshold does not separate true recoveries from the discrepancy residual. Improving
+  precision further would require weight/feature work (e.g. making status a feature), deliberately
+  deferred — the residual is an accepted human-review population, not a defect.
+
+Phase 1 §9 re-verification with the new class present (both seeds): false-match exposure **0**,
+exception coverage **1.0**, control-total integrity **true**. Expected shifts only: Seed A exact
+matches 1830 → 1788, straight-through 0.922 → 0.901; Seed B exact 1826 → 1773, straight-through
+0.923 → 0.8965. The Phase 1 gate holds.
+
