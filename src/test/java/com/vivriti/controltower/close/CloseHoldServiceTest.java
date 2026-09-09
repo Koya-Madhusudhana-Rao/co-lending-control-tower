@@ -95,9 +95,46 @@ class CloseHoldServiceTest {
         assertEquals(List.of("B-1", "B-2"), firstDecision.blockingRecordReferences());
     }
 
+    @Test
+    void countsUnresolvedExposureOncePerBusinessEventAcrossSources() {
+        CanonicalEvent originator = event("INSTR-1", "20000.00");
+        CanonicalEvent lms = sourceEvent(SourceSystem.LMS, "BOOK-1", "20000.00");
+        CanonicalEvent bank = sourceEvent(SourceSystem.BANK, "TXN-1", "20000.00");
+
+        CloseHoldDecision decision = service.decide(new BigDecimal("3000000.00"), List.of(originator, lms, bank), List.of());
+
+        assertEquals(CloseHoldDecision.Decision.HOLD, decision.decision());
+        assertTrue(decision.blockingInr().compareTo(new BigDecimal("20000.00")) == 0);
+    }
+
+    @Test
+    void duplicateExceptionDoesNotBlockFinancialClose() {
+        ExceptionRecord duplicate = new ExceptionQueueService().create(new ExceptionDetection(
+            event("INSTR-1", "20000.00"), ExceptionClassification.DUPLICATE_EVENT,
+            List.of("source.csv#line=2"), "duplicate-rule", "duplicate evidence", CauseConfidence.CONFIRMED,
+            "Duplicate quarantined", now, new Actor("operator-1", Role.OPERATOR)));
+
+        CloseHoldDecision decision = service.decide(new BigDecimal("3000000.00"), List.of(), List.of(duplicate));
+
+        assertEquals(CloseHoldDecision.Decision.CLOSE, decision.decision());
+        assertTrue(decision.blockingInr().compareTo(BigDecimal.ZERO) == 0);
+    }
+
     private CanonicalEvent event(String id, String amount) {
         CanonicalEvent event = new CanonicalEvent();
         event.setSourceSystem(SourceSystem.ORIGINATOR);
+        event.setBusinessEventId(id);
+        event.setImmutableSourceRecordId(id);
+        event.setAmount(new BigDecimal(amount));
+        event.setCurrency("INR");
+        event.setIngestionState(IngestionState.VALIDATED);
+        event.setValidationState(ValidationState.VALID);
+        return event;
+    }
+
+    private CanonicalEvent sourceEvent(SourceSystem source, String id, String amount) {
+        CanonicalEvent event = new CanonicalEvent();
+        event.setSourceSystem(source);
         event.setBusinessEventId(id);
         event.setImmutableSourceRecordId(id);
         event.setAmount(new BigDecimal(amount));

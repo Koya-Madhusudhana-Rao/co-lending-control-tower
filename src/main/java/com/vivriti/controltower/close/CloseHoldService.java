@@ -3,6 +3,8 @@ package com.vivriti.controltower.close;
 import com.vivriti.controltower.domain.CanonicalEvent;
 import com.vivriti.controltower.domain.MatchingState;
 import com.vivriti.controltower.domain.ReconciliationState;
+import com.vivriti.controltower.domain.SourceSystem;
+import com.vivriti.controltower.exceptions.ExceptionClassification;
 import com.vivriti.controltower.exceptions.ExceptionRecord;
 import com.vivriti.controltower.exceptions.ExceptionStatus;
 
@@ -44,6 +46,10 @@ public class CloseHoldService {
             if (latestStatus(exception) != ExceptionStatus.OPEN) {
                 continue;
             }
+            // Duplicates route to operations but the surviving transaction reconciled, so they hold no financial exposure.
+            if (exception.classification() == ExceptionClassification.DUPLICATE_EVENT) {
+                continue;
+            }
             String key = stableKey(exception.businessEventId(), first(exception.affectedSourceRecordReferences()), exception.exceptionId());
             if (countedKeys.add(key)) {
                 blockingAmount = blockingAmount.add(amount(exception.amountInr()));
@@ -61,6 +67,10 @@ public class CloseHoldService {
     }
 
     private boolean isBlocking(CanonicalEvent event) {
+        // Exposure is counted once per business event using the authoritative originator instruction.
+        if (event.getSourceSystem() != SourceSystem.ORIGINATOR) {
+            return false;
+        }
         if (event.getMatchingState() == MatchingState.TIMING_DIFFERENCE_PENDING
             || event.getReconciliationState() == ReconciliationState.PENDING) {
             return false;

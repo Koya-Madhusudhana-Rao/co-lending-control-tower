@@ -5,6 +5,9 @@ import com.vivriti.controltower.close.CloseHoldPolicy;
 import com.vivriti.controltower.close.CloseHoldService;
 import com.vivriti.controltower.domain.CanonicalEvent;
 import com.vivriti.controltower.domain.MatchingState;
+import com.vivriti.controltower.domain.SourceSystem;
+import com.vivriti.controltower.domain.ValidationState;
+import com.vivriti.controltower.exceptions.ExceptionMaterializer;
 import com.vivriti.controltower.exceptions.ExceptionQueueService;
 import com.vivriti.controltower.exceptions.ExceptionRecord;
 import com.vivriti.controltower.exceptions.AppendOnlyAuditTrail;
@@ -32,6 +35,7 @@ public class Phase1PipelineService {
     private final ExactReconciliationMatcher exactMatcher;
     private final CompositeAndTimingMatcher compositeAndTiming = new CompositeAndTimingMatcher();
     private final ExceptionQueueService exceptions = new ExceptionQueueService();
+    private final ExceptionMaterializer materializer = new ExceptionMaterializer();
     private final CloseHoldService closeHold;
     private final DurableRunStore durableRunStore;
     private final AppendOnlyAuditTrail auditTrail = new AppendOnlyAuditTrail();
@@ -60,13 +64,16 @@ public class Phase1PipelineService {
             return new PipelineRunResult(batch.batchId(), persisted, null, true);
         }
         try {
-            List<CanonicalEvent> canonical = normalize(batch);
+            NormalizedBatch normalized = normalize(batch);
+            List<CanonicalEvent> canonical = normalized.events();
             exactMatcher.reconcile(canonical);
             compositeAndTiming.reconcile(canonical);
-            List<ExceptionRecord> exceptionRecords = batch.detections().stream()
-                .map(exceptions::create)
-                .toList();
-            BigDecimal batchTotal = canonical.stream().map(CanonicalEvent::getAmount)
+            List<ExceptionRecord> exceptionRecords = new ArrayList<>(
+                materializer.materialize(canonical, normalized.duplicateBusinessEventIds(), batch.reconciliationCutOff()));
+            batch.detections().stream().map(exceptions::create).forEach(exceptionRecords::add);
+            BigDecimal batchTotal = canonical.stream()
+                .filter(event -> event.getSourceSystem() == SourceSystem.ORIGINATOR)
+                .map(CanonicalEvent::getAmount)
                 .filter(java.util.Objects::nonNull).reduce(BigDecimal.ZERO, BigDecimal::add);
             CloseHoldDecision decision = closeHold.decide(batchTotal, canonical, exceptionRecords);
             PipelineSnapshot snapshot = new PipelineSnapshot(
@@ -100,7 +107,7 @@ public class Phase1PipelineService {
         return durableRunStore;
     }
 
-    private List<CanonicalEvent> normalize(PipelineBatch batch) {
+    private NormalizedBatch normalize(PipelineBatch batch) {
         LocalDateTime cutoff = batch.reconciliationCutOff();
         IngestionBatchResult originator = ingestion.ingest(FeedType.ORIGINATOR, batch.originatorRecords(), batch.batchId(), null, cutoff);
         IngestionBatchResult lms = ingestion.ingest(FeedType.LMS, batch.lmsRecords(), batch.batchId(), null, cutoff);
@@ -114,7 +121,14 @@ public class Phase1PipelineService {
         events.addAll(normalizer.normalize(FeedType.ORIGINATOR, originator.acceptedRecords(), batch.batchId() + "/originator.csv", cutoff));
         events.addAll(normalizer.normalize(FeedType.LMS, lms.acceptedRecords(), batch.batchId() + "/lms.csv", cutoff));
         events.addAll(normalizer.normalize(FeedType.BANK, bank.acceptedRecords(), batch.batchId() + "/bank.csv", cutoff));
-        return events;
+        List<String> duplicates = originator.quarantinedRecords().stream()
+            .filter(record -> record.validationState() == ValidationState.DUPLICATE)
+            .map(record -> record.originalRecord().split(",", -1)[0])
+            .toList();
+        return new NormalizedBatch(events, duplicates);
+    }
+
+    private record NormalizedBatch(List<CanonicalEvent> events, List<String> duplicateBusinessEventIds) {
     }
 
     private boolean hasInput(List<String> records) {

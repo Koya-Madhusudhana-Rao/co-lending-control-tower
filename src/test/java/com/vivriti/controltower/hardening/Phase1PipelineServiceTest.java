@@ -73,8 +73,28 @@ class Phase1PipelineServiceTest {
 
         assertTrue(result.succeeded());
         assertEquals(9, result.snapshot().canonicalRecordFingerprints().size());
-        assertEquals(0, result.snapshot().exceptionIds().size());
+        assertTrue(result.snapshot().exceptionIds().size() >= 1);
         assertNotNull(result.snapshot().closeHoldDecision().decision());
+    }
+
+    @Test
+    void fullPipelineMaterializesExceptionsHoldsOnExposureAndPersistsQueue() throws Exception {
+        Path runs = Files.createTempDirectory("materialize-runs");
+        Path gen = Files.createTempDirectory("materialize-gen");
+        GeneratorOutput generated = new SeededFeedGenerator(12345L, 60, 3, 60, 0.06d, gen).generate();
+        PipelineBatch batch = new PipelineBatch("BATCH-001",
+            dataLines(generated.originatorPath()), dataLines(generated.lmsPath()), dataLines(generated.bankPath()),
+            LocalDateTime.of(2026, 8, 4, 17, 30), List.of());
+        Phase1PipelineService pipeline = new Phase1PipelineService(runs);
+
+        PipelineRunResult result = pipeline.process(batch);
+
+        assertTrue(result.succeeded());
+        assertTrue(result.snapshot().exceptionIds().size() >= 1);
+        assertEquals("HOLD", result.snapshot().closeHoldDecision().decision().name());
+        assertTrue(result.snapshot().closeHoldDecision().blockingInr().signum() > 0);
+        assertEquals(result.snapshot().exceptionIds().size(),
+            pipeline.durableRunStore().loadExceptionRecords(result.snapshot().batchFingerprint()).size());
     }
 
     @Test
