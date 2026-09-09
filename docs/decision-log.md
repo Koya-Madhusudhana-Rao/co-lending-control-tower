@@ -10,3 +10,44 @@
 - Trade-offs: JSON files are less suitable for concurrent writers, querying, retention management, and multi-process deployment than a relational database. Atomic file replacement and deterministic fingerprints provide the Phase 1 safety boundary, but this is not a production-scale persistence design.
 - Rejected alternative: Full RDBMS persistence was deferred because its additional schema, migration, transaction, and integration-test work is disproportionate for the current case-study timeline. PostgreSQL/JPA dependencies and the unused Docker service were removed rather than left as dead infrastructure.
 - Documentation impact: Local setup now requires only JDK 17 and Maven. Docker, PostgreSQL, JPA, and Testcontainers are not prerequisites for Phase 1.
+
+## Generator anomaly injection: physical corruption, not just labels
+
+- Decision: The seeded feed generator must physically corrupt the feed rows it labels as anomalous, not merely record the anomaly in ground truth.
+- Context: The generator produced a ground-truth manifest listing missing/mismatched/duplicate/late instructions, but the emitted Originator/LMS/Bank feeds still contained clean, fully-agreeing rows for many of those instructions. The pipeline therefore reconciled them correctly, and evaluation — comparing against ground truth — reported failures that did not reflect any real pipeline defect. The evaluation harness was measuring the generator's dishonesty, not the reconciliation logic.
+- Options considered: (a) loosen evaluation to tolerate the mismatch; (b) treat ground truth as advisory only; (c) fix the generator so the physical feed data actually reflects each labelled anomaly.
+- Chosen: (c) — the generator now removes/alters/duplicates/delays the actual rows so the feed content matches its own ground-truth labels.
+- Why: Ground truth is only a valid oracle if the feeds physically embody the anomalies it claims. Anything else makes every downstream metric unfalsifiable.
+- Trade-offs: The generator is more complex and must keep physical mutation and label emission in lock-step; a future change to one must update the other.
+- Rejected alternative: Loosening evaluation (a/b) was rejected because it would have hidden the exact class of silent-divergence bug the control tower exists to catch, and would have made the scorecard meaningless.
+
+## Level 1 exact match must check status and timing, not just amount/identity
+
+- Decision: Level 1 exact reconciliation must require source-status agreement and clean validation state, not only identifier/currency/amount agreement.
+- Context: Level 1 was matching business events whose amounts and identifiers agreed while their statuses disagreed (e.g. LMS status differing, or Bank not `POSTED`), and it ignored validation/timing state. This produced false matches: genuinely mismatched or late events were reported as reconciled, so their unresolved value never reached the exception queue.
+- Options considered: (a) leave Level 1 permissive and rely on later levels to catch status/timing; (b) tighten Level 1 to require status agreement and `VALID` validation state on every candidate before declaring an exact match.
+- Chosen: (b) — an exact match now requires identifiers, currency, amount within tolerance, compatible event types, source-status agreement (Originator == LMS, Bank `POSTED`), and `VALID` state on every candidate.
+- Why: A false positive at Level 1 is the most dangerous failure mode — it removes an item from scrutiny entirely. Level 1 must be the strictest gate, not the most lenient.
+- Trade-offs: Slightly fewer auto-resolved items at Level 1; more events fall through to Level 2/3 or to exceptions. That is the correct direction for a financial control.
+- Rejected alternative: Relying on downstream levels (a) was rejected because once Level 1 declares a match the event is treated as resolved and never re-examined, so the defect could not be recovered later.
+
+## Duplicate residue is a resolved-with-exception outcome, not false-match exposure
+
+- Decision: A correctly-resolved duplicate business event is an expected resolution (with its own `DUPLICATE_EVENT` exception), not false-match exposure.
+- Context: Ingestion quarantines the duplicate Originator row and the surviving original still agrees with LMS and Bank, so exact-matching the survivor is correct. Two gaps existed: nothing recorded that a duplicate had occurred, and the evaluation metric counted the correctly-matched survivor as false-match exposure — the same double-counting shape as an earlier composite bug.
+- Options considered: (a) change the matcher to refuse to match any event that had a duplicate; (b) leave evaluation counting it as false exposure; (c) keep matching the survivor, emit a `DUPLICATE_EVENT` exception for the quarantined row, and teach evaluation to treat a matched duplicate as an expected resolution.
+- Chosen: (c).
+- Why: The financially correct outcome is that the transaction reconciles once and the duplication is separately visible and owned (Engineering / Source Partner). Distinguishing "duplicate residue" from "false match" keeps the scorecard honest.
+- Trade-offs: Evaluation must special-case matched `DUPLICATE_EVENT` events; the classification logic is slightly more nuanced.
+- Rejected alternative: Refusing to match the survivor (a) was rejected because it would manufacture an unresolved exposure that does not exist and understate straight-through resolution; leaving the miscount (b) was rejected because it inflated false-match exposure with correctly-handled cases.
+
+## Close/hold must read the materialized exception queue, counted once per business event
+
+- Decision: The close/hold decision must be driven by the materialized exception queue, counting each blocking business event once, restricted to Originator exposure and excluding `DUPLICATE_EVENT`.
+- Context: The pipeline computed close/hold from `batch.detections()` (an empty upstream list) rather than the exceptions produced by `ExceptionMaterializer`, so material unresolved value did not block closure. A naive fix then triple-counted the same business event across Originator, LMS, and Bank, and counted resolved duplicates as blocking, inflating the blocking total.
+- Options considered: (a) keep reading `detections()`; (b) sum blocking value across all three sources; (c) drive close/hold from the materialized queue, count blocking exposure from Originator canonical events only, and exclude `DUPLICATE_EVENT` from blocking.
+- Chosen: (c).
+- Why: The batch total is defined from Originator (authoritative disbursement intent), so blocking exposure must be measured on the same basis to be comparable; counting the same event three times would both distort the hold formula and mislead Finance. Resolved duplicates are not unresolved exposure.
+- Trade-offs: Close/hold now depends on materialization running first and on correct source attribution; the ordering is enforced in `Phase1PipelineService`.
+- Rejected alternative: Reading `detections()` (a) left the control silently disabled; cross-source summation (b) produced a blocking figure that did not reconcile against the Originator-based batch total.
+- Verified outcome: Seed A (12345) produces a HOLD decision with blocking value INR 6,051,643 across 136 blocking references and 158 persisted exceptions, cross-checked against the evaluation harness.
