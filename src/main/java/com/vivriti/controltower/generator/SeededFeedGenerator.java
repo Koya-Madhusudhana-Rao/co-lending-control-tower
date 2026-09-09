@@ -41,7 +41,7 @@ public class SeededFeedGenerator {
         originatorLines.add("instructionId,loanReference,partner,instructionDateTime,amount,currency,status,batch,receivedTime");
         lmsLines.add("bookingId,internalLoanId,partnerLoanReference,bookingDateTime,bookedAmount,currency,status,batch");
         bankLines.add("transactionReference,linkedInstructionReference,valueDateTime,debitAmount,status,reversalReference,batch");
-        groundTruthLines.add("instructionId,loanReference,partner,amount,currency,anomalyType,status");
+        groundTruthLines.add("instructionId,loanReference,partner,amount,currency,anomalyType,status,affectedSource,action");
 
         int anomalyCount = 0;
         String[] partners = {"PARA", "VIVA", "LENDX"};
@@ -53,28 +53,48 @@ public class SeededFeedGenerator {
             String status = i % 17 == 0 ? "PENDING" : "APPROVED";
             BigDecimal amount = BigDecimal.valueOf(25000 + (i % 200) * 175 + random.nextInt(4000)).setScale(2, RoundingMode.HALF_UP);
 
-            String originatorLine = instructionId + "," + loanRef + "," + partner + ",2026-08-0" + (i % 3 + 1) + "T10:00:00," + amount + ",INR," + status + ",BATCH-001,2026-08-0" + (i % 3 + 1) + "T10:05:00";
-            originatorLines.add(originatorLine);
-
             String bookingId = "BOOK-" + String.format(Locale.US, "%06d", i + 1);
-            String lmsLine = bookingId + ",LOAN-INT-" + String.format(Locale.US, "%05d", i + 1) + "," + loanRef + ",2026-08-0" + (i % 3 + 1) + "T10:10:00," + amount + ",INR," + status + ",BATCH-001";
-            lmsLines.add(lmsLine);
-
             String bankStatus = (i % 26 == 0) ? "REVERSED" : "POSTED";
             String reversalReference = bankStatus.equals("REVERSED") ? "REV-" + String.format(Locale.US, "%06d", i + 1) : "";
-            String bankLine = "TXN-" + String.format(Locale.US, "%06d", i + 1) + "," + instructionId + ",2026-08-0" + (i % 3 + 1) + "T11:00:00," + amount + "," + bankStatus + "," + reversalReference + ",BATCH-001";
-            bankLines.add(bankLine);
+            String businessDay = "2026-08-0" + (i % 3 + 1);
+            String anomaly = null;
 
             if (random.nextDouble() < anomalyRate) {
                 anomalyCount++;
-                String anomaly = "MISSING_EVENT";
+                anomaly = "MISSING_EVENT";
                 if (i % 6 == 0) anomaly = "DUPLICATE_EVENT";
                 if (i % 6 == 1) anomaly = "AMOUNT_MISMATCH";
                 if (i % 6 == 2) anomaly = "STATUS_MISMATCH";
                 if (i % 6 == 3) anomaly = "TIMING_DIFFERENCE";
                 if (i % 6 == 4) anomaly = "COMPOSITE_MATCH";
                 if (i % 6 == 5) anomaly = "MISSING_EVENT";
-                groundTruthLines.add(instructionId + "," + loanRef + "," + partner + "," + amount + ",INR," + anomaly + "," + status);
+            }
+
+            String originatorReceivedTime = "TIMING_DIFFERENCE".equals(anomaly) ? "2026-08-04T18:30:00" : businessDay + "T10:05:00";
+            String originatorLine = instructionId + "," + loanRef + "," + partner + "," + businessDay + "T10:00:00," + amount + ",INR," + status + ",BATCH-001," + originatorReceivedTime;
+            originatorLines.add(originatorLine);
+            if ("DUPLICATE_EVENT".equals(anomaly)) {
+                originatorLines.add(originatorLine);
+            }
+
+            BigDecimal lmsAmount = "AMOUNT_MISMATCH".equals(anomaly) ? amount.add(new BigDecimal("2.00")) : amount;
+            String lmsStatus = "STATUS_MISMATCH".equals(anomaly) ? "BOOKING_REVIEW" : status;
+            if ("COMPOSITE_MATCH".equals(anomaly)) {
+                BigDecimal firstPart = amount.divide(new BigDecimal("2"), 2, RoundingMode.DOWN);
+                BigDecimal secondPart = amount.subtract(firstPart).setScale(2, RoundingMode.HALF_UP);
+                lmsLines.add(bookingId + "-A,LOAN-INT-" + String.format(Locale.US, "%05d", i + 1) + "-A," + loanRef + "," + businessDay + "T10:10:00," + firstPart + ",INR," + status + ",BATCH-001");
+                lmsLines.add(bookingId + "-B,LOAN-INT-" + String.format(Locale.US, "%05d", i + 1) + "-B," + loanRef + "," + businessDay + "T10:12:00," + secondPart + ",INR," + status + ",BATCH-001");
+                bankLines.add("TXN-" + String.format(Locale.US, "%06d", i + 1) + "-A," + instructionId + "," + businessDay + "T11:00:00," + firstPart + "," + bankStatus + "," + reversalReference + ",BATCH-001");
+                bankLines.add("TXN-" + String.format(Locale.US, "%06d", i + 1) + "-B," + instructionId + "," + businessDay + "T11:02:00," + secondPart + "," + bankStatus + "," + reversalReference + ",BATCH-001");
+            } else {
+                lmsLines.add(bookingId + ",LOAN-INT-" + String.format(Locale.US, "%05d", i + 1) + "," + loanRef + "," + businessDay + "T10:10:00," + lmsAmount + ",INR," + lmsStatus + ",BATCH-001");
+                if (!"MISSING_EVENT".equals(anomaly)) {
+                    bankLines.add("TXN-" + String.format(Locale.US, "%06d", i + 1) + "," + instructionId + "," + businessDay + "T11:00:00," + amount + "," + bankStatus + "," + reversalReference + ",BATCH-001");
+                }
+            }
+
+            if (anomaly != null) {
+                groundTruthLines.add(instructionId + "," + loanRef + "," + partner + "," + amount + ",INR," + anomaly + "," + status + "," + affectedSource(anomaly) + "," + action(anomaly));
             }
         }
 
@@ -106,6 +126,29 @@ public class SeededFeedGenerator {
         Files.writeString(qualityReportPath, qualityReport, StandardCharsets.UTF_8);
 
         return new GeneratorOutput(originatorPath, lmsPath, bankPath, groundTruthPath, qualityReportPath,
-            rowsPerFeed, rowsPerFeed, rowsPerFeed, rowsPerFeed * 3, anomalyCount);
+            originatorLines.size() - 1, lmsLines.size() - 1, bankLines.size() - 1,
+            originatorLines.size() + lmsLines.size() + bankLines.size() - 3, anomalyCount);
+    }
+
+    private String affectedSource(String anomaly) {
+        return switch (anomaly) {
+            case "MISSING_EVENT" -> "BANK";
+            case "DUPLICATE_EVENT", "TIMING_DIFFERENCE" -> "ORIGINATOR";
+            case "AMOUNT_MISMATCH", "STATUS_MISMATCH" -> "LMS";
+            case "COMPOSITE_MATCH" -> "LMS+BANK";
+            default -> "UNKNOWN";
+        };
+    }
+
+    private String action(String anomaly) {
+        return switch (anomaly) {
+            case "MISSING_EVENT" -> "omitted bank settlement row";
+            case "DUPLICATE_EVENT" -> "duplicated originator row";
+            case "AMOUNT_MISMATCH" -> "increased LMS amount by INR 2.00";
+            case "STATUS_MISMATCH" -> "changed LMS status";
+            case "TIMING_DIFFERENCE" -> "moved originator receivedTime after batch cutoff inside grace window";
+            case "COMPOSITE_MATCH" -> "split LMS and bank rows into two exact-sum components";
+            default -> "none";
+        };
     }
 }
