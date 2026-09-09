@@ -32,11 +32,28 @@ No Docker or database is required for the current Phase 1 implementation. Runtim
 mvn spring-boot:run
 ```
 
+This starts the Spring context only; it does not run the pipeline.
+
+## Run the Phase 1 demo (one command)
+
+The demo generates two fixed seeds, runs the full pipeline end-to-end
+(generate → ingest → normalize → reconcile → materialize exceptions → close/hold → persist),
+and prints the featured seed's close/hold decision plus the Seed A vs Seed B scorecard comparison.
+It is opt-in via the `demo` profile and self-terminates.
+
+```bash
+mvn -q spring-boot:run "-Dspring-boot.run.profiles=demo" "-Dspring-boot.run.arguments=generate --seed 12345"
+```
+
+The featured seed defaults to `12345` (Seed A) if `--seed` is omitted. Durable run artifacts are
+written under `data/runs/<batchFingerprint>/` and a human-readable summary under `data/demo/`.
+
 ## Test
 
 ```bash
 mvn test
 ```
+
 
 ## Project status
 
