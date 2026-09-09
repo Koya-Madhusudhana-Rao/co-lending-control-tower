@@ -12,6 +12,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ExceptionQueueServiceTest {
 
@@ -82,6 +83,30 @@ class ExceptionQueueServiceTest {
         assertThrows(IllegalArgumentException.class, () -> overrides.approveStatusOverride(
             exception, operator, new Actor("operator-1", Role.APPROVER), ExceptionStatus.RESOLVED,
             "self approval", detectedAt));
+    }
+
+    @Test
+    void twoActorOverridePopulatesOverrideHistoryCrossLinkedToAudit() {
+        ExceptionRecord exception = create(ExceptionClassification.AMOUNT_MISMATCH);
+        AppendOnlyAuditTrail auditTrail = new AppendOnlyAuditTrail();
+        ExceptionOverrideService overrides = new ExceptionOverrideService(auditTrail);
+
+        OverrideResult result = overrides.approveStatusOverride(
+            exception, new Actor("operator-2", Role.OPERATOR), new Actor("approver-1", Role.APPROVER),
+            ExceptionStatus.RESOLVED, "Finance confirmed corrected amount", detectedAt);
+
+        assertEquals(1, result.exception().overrideHistory().size());
+        String entry = result.exception().overrideHistory().get(0);
+        assertTrue(entry.contains("approvedBy=approver-1"), entry);
+        assertTrue(entry.contains("status=RESOLVED"), entry);
+        assertTrue(entry.contains("reason=Finance confirmed corrected amount"), entry);
+        assertTrue(entry.contains("at=" + detectedAt), entry);
+        String expectedAuditRef = exception.exceptionId() + ":STATUS_CHANGED_TO_RESOLVED@" + detectedAt;
+        assertTrue(entry.contains("auditRef=" + expectedAuditRef), entry);
+        AuditEntry audit = auditTrail.entries().get(0);
+        assertEquals(exception.exceptionId(), audit.input());
+        assertEquals("STATUS_CHANGED_TO_RESOLVED", audit.decision());
+        assertEquals(detectedAt, audit.timestamp());
     }
 
     @Test

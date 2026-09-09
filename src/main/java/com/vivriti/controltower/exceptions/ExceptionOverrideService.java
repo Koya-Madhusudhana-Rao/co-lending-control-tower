@@ -35,12 +35,20 @@ public class ExceptionOverrideService {
         ExceptionStateSnapshot before = ExceptionStateSnapshot.from(exception);
         var history = new ArrayList<>(exception.statusHistory());
         history.add(new ExceptionStatusChange(newStatus, timestamp, reason));
+        // Cross-link to the audit entry by its deterministic input:decision@timestamp signature.
+        String auditReference = exception.exceptionId() + ":STATUS_CHANGED_TO_" + newStatus + "@" + timestamp;
+        var overrideHistory = new ArrayList<>(exception.overrideHistory());
+        overrideHistory.add("approvedBy=" + approver.actorId()
+            + "; status=" + newStatus
+            + "; at=" + timestamp
+            + "; reason=" + reason
+            + "; auditRef=" + auditReference);
         ExceptionRecord afterException = new ExceptionRecord(
             exception.exceptionId(), exception.createdBy(), exception.classification(), exception.affectedSourceRecordReferences(),
             exception.businessEventId(), exception.partner(), exception.amountInr(), exception.detectionTime(), exception.age(),
             exception.priority(), exception.slaDueAt(), exception.evidence(), exception.rule(), exception.causeConfidence(),
             exception.likelyCause(), exception.owner(), exception.recommendedNextAction(), exception.escalationPath(), history,
-            exception.overrideHistory());
+            overrideHistory);
         AuditEntry entry = new AuditEntry(
             exception.exceptionId(), "authorized-status-override", "STATUS_CHANGED_TO_" + newStatus,
             approver, timestamp, before, ExceptionStateSnapshot.from(afterException), reason);
