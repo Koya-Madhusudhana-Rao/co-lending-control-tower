@@ -7,8 +7,13 @@ import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -95,6 +100,81 @@ class SeededFeedGeneratorTest {
         for (String id : anomalousIds) {
             assertTrue(originatorIds.contains(id), "anomalous id missing from originator feed: " + id);
         }
+    }
+
+    @Test
+    void referenceMismatchIsAdditiveLeakFreeAndCollisionFree() throws IOException {
+        GeneratorOutput baseline = new SeededFeedGenerator(12345L, 2000, 3, 2000, configuredAnomalyRate(), 0.0d,
+            Files.createTempDirectory("gen-base")).generate();
+        GeneratorOutput withReference = new SeededFeedGenerator(12345L, 2000, 3, 2000, configuredAnomalyRate(),
+            configuredReferenceMismatchRate(), Files.createTempDirectory("gen-ref")).generate();
+
+        // The six mandatory Phase 1 class counts are identical with and without the additive class.
+        Map<String, Integer> baseCounts = anomalyCounts(baseline.groundTruthPath());
+        Map<String, Integer> refCounts = anomalyCounts(withReference.groundTruthPath());
+        for (String mandatory : List.of("MISSING_EVENT", "DUPLICATE_EVENT", "AMOUNT_MISMATCH", "STATUS_MISMATCH", "TIMING_DIFFERENCE", "COMPOSITE_MATCH")) {
+            assertEquals(baseCounts.getOrDefault(mandatory, 0), refCounts.getOrDefault(mandatory, 0), "mandatory class changed: " + mandatory);
+        }
+        assertEquals(0, baseline.referenceMismatchCount());
+        assertTrue(withReference.referenceMismatchCount() > 0);
+        assertEquals(withReference.referenceMismatchCount(), refCounts.getOrDefault("REFERENCE_MISMATCH", 0).intValue());
+
+        // The new label lives only in ground truth, never in the feed data.
+        for (Path feed : List.of(withReference.originatorPath(), withReference.lmsPath(), withReference.bankPath())) {
+            assertFalse(Files.readString(feed).contains("REFERENCE_MISMATCH"), feed.getFileName() + " leaks the label");
+        }
+
+        // Corrupted linking references collide with no real linking reference and carry the non-numeric marker.
+        Set<String> realReferences = new HashSet<>();
+        List<String> originator = Files.readAllLines(withReference.originatorPath());
+        for (int i = 1; i < originator.size(); i++) {
+            String[] columns = originator.get(i).split(",", -1);
+            realReferences.add(columns[0]);
+            realReferences.add(columns[1]);
+        }
+        List<String> corrupted = corruptedLinkingReferences(withReference);
+        assertFalse(corrupted.isEmpty());
+        for (String reference : corrupted) {
+            assertFalse(realReferences.contains(reference), "corrupted reference collides with a real one: " + reference);
+            assertTrue(reference.contains("X"), "corrupted reference should carry the non-numeric marker: " + reference);
+        }
+    }
+
+    private Map<String, Integer> anomalyCounts(Path groundTruth) throws IOException {
+        Map<String, Integer> counts = new HashMap<>();
+        List<String> lines = Files.readAllLines(groundTruth);
+        for (int i = 1; i < lines.size(); i++) {
+            counts.merge(lines.get(i).split(",", -1)[5], 1, Integer::sum);
+        }
+        return counts;
+    }
+
+    private List<String> corruptedLinkingReferences(GeneratorOutput output) throws IOException {
+        List<String> corrupted = new ArrayList<>();
+        List<String> lms = Files.readAllLines(output.lmsPath());
+        for (int i = 1; i < lms.size(); i++) {
+            String reference = lms.get(i).split(",", -1)[2];
+            if (reference.contains("X")) {
+                corrupted.add(reference);
+            }
+        }
+        List<String> bank = Files.readAllLines(output.bankPath());
+        for (int i = 1; i < bank.size(); i++) {
+            String reference = bank.get(i).split(",", -1)[1];
+            if (reference.contains("X")) {
+                corrupted.add(reference);
+            }
+        }
+        return corrupted;
+    }
+
+    private double configuredReferenceMismatchRate() {
+        YamlPropertiesFactoryBean yaml = new YamlPropertiesFactoryBean();
+        yaml.setResources(new FileSystemResource(Path.of("config", "reconciliation.yml")));
+        yaml.afterPropertiesSet();
+        Properties properties = yaml.getObject();
+        assertNotNull(properties);
+        return Double.parseDouble(properties.getProperty("reconciliation.referenceMismatchRate"));
     }
 
     private double configuredAnomalyRate() {

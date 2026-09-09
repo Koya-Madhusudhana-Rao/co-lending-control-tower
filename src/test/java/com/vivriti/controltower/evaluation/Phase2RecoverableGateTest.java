@@ -9,12 +9,15 @@ import com.vivriti.controltower.hardening.PipelineBatch;
 import com.vivriti.controltower.hardening.PipelineRunResult;
 import com.vivriti.controltower.probabilistic.ProbabilisticMatchConfig;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.config.YamlPropertiesFactoryBean;
+import org.springframework.core.io.FileSystemResource;
 
 import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Properties;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -26,7 +29,7 @@ class Phase2RecoverableGateTest {
     @Test
     void measuresRecoverablePairGateOnSeedA() throws Exception {
         Path gen = Files.createTempDirectory("phase2-gate-gen");
-        GeneratorOutput generated = new SeededFeedGenerator(12345L, 2000, 3, 2000, 0.06d, gen).generate();
+        GeneratorOutput generated = new SeededFeedGenerator(12345L, 2000, 3, 2000, 0.06d, referenceMismatchRate(), gen).generate();
 
         Path runs = Files.createTempDirectory("phase2-gate-runs");
         Phase1PipelineService pipeline = new Phase1PipelineService(runs, enabled());
@@ -40,7 +43,7 @@ class Phase2RecoverableGateTest {
 
         Path out = Path.of("target", "phase2-seed-a-recoverable-gate.txt");
         Files.createDirectories(out.getParent());
-        Files.writeString(out, gate.render());
+        Files.writeString(out, gate.render() + "generatorReferenceMismatchCount=" + generated.referenceMismatchCount() + "\n");
         System.out.println(gate.render());
 
         assertTrue(gate.unresolvedOriginators() > 0, "expected a non-empty unresolved population to measure");
@@ -59,5 +62,13 @@ class Phase2RecoverableGateTest {
 
     private ProbabilisticMatchConfig enabled() {
         return new ProbabilisticMatchConfig(true, 0.40, 0.35, 0.15, 0.10, new BigDecimal("100.00"), 6.0, 0.50, 0.80);
+    }
+
+    private double referenceMismatchRate() {
+        YamlPropertiesFactoryBean yaml = new YamlPropertiesFactoryBean();
+        yaml.setResources(new FileSystemResource(Path.of("config", "reconciliation.yml")));
+        yaml.afterPropertiesSet();
+        Properties properties = yaml.getObject();
+        return Double.parseDouble(properties.getProperty("reconciliation.referenceMismatchRate"));
     }
 }

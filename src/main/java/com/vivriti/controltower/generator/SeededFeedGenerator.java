@@ -18,14 +18,20 @@ public class SeededFeedGenerator {
     private final int partnerCount;
     private final int rowsPerFeed;
     private final double anomalyRate;
+    private final double referenceMismatchRate;
     private final Path outputDir;
 
     public SeededFeedGenerator(long seed, int disbursementCount, int partnerCount, int rowsPerFeed, double anomalyRate, Path outputDir) {
+        this(seed, disbursementCount, partnerCount, rowsPerFeed, anomalyRate, 0.0d, outputDir);
+    }
+
+    public SeededFeedGenerator(long seed, int disbursementCount, int partnerCount, int rowsPerFeed, double anomalyRate, double referenceMismatchRate, Path outputDir) {
         this.seed = seed;
         this.disbursementCount = disbursementCount;
         this.partnerCount = partnerCount;
         this.rowsPerFeed = rowsPerFeed;
         this.anomalyRate = anomalyRate;
+        this.referenceMismatchRate = referenceMismatchRate;
         this.outputDir = outputDir;
     }
 
@@ -33,6 +39,8 @@ public class SeededFeedGenerator {
         Files.createDirectories(outputDir);
 
         Random random = new Random(seed);
+        // Separate stream so the additive reference-mismatch class never perturbs the Phase 1 anomaly/amount stream.
+        Random referenceMismatchRandom = new Random(seed * 31 + 17);
         List<String> originatorLines = new ArrayList<>();
         List<String> lmsLines = new ArrayList<>();
         List<String> bankLines = new ArrayList<>();
@@ -44,11 +52,16 @@ public class SeededFeedGenerator {
         groundTruthLines.add("instructionId,loanReference,partner,amount,currency,anomalyType,status,affectedSource,action");
 
         int anomalyCount = 0;
+        int referenceMismatchCount = 0;
+        List<String> corruptedReferences = new ArrayList<>();
+        java.util.Set<String> realLinkingReferences = new java.util.HashSet<>();
         String[] partners = {"PARA", "VIVA", "LENDX"};
 
         for (int i = 0; i < rowsPerFeed; i++) {
             String instructionId = "INSTR-" + String.format(Locale.US, "%06d", i + 1);
             String loanRef = "LOAN-" + String.format(Locale.US, "%05d", i + 1);
+            realLinkingReferences.add(instructionId);
+            realLinkingReferences.add(loanRef);
             String partner = partners[i % partnerCount];
             String status = i % 17 == 0 ? "PENDING" : "APPROVED";
             BigDecimal amount = BigDecimal.valueOf(25000 + (i % 200) * 175 + random.nextInt(4000)).setScale(2, RoundingMode.HALF_UP);
@@ -70,6 +83,12 @@ public class SeededFeedGenerator {
                 if (i % 6 == 5) anomaly = "MISSING_EVENT";
             }
 
+            // Additive Phase 2 class: only otherwise-clean, would-be-exact-match records get their linking references corrupted.
+            boolean referenceMismatch = referenceMismatchRate > 0.0
+                && anomaly == null
+                && "POSTED".equals(bankStatus)
+                && referenceMismatchRandom.nextDouble() < referenceMismatchRate;
+
             String originatorReceivedTime = "TIMING_DIFFERENCE".equals(anomaly) ? "2026-08-04T18:30:00" : businessDay + "T10:05:00";
             String originatorLine = instructionId + "," + loanRef + "," + partner + "," + businessDay + "T10:00:00," + amount + ",INR," + status + ",BATCH-001," + originatorReceivedTime;
             originatorLines.add(originatorLine);
@@ -87,14 +106,30 @@ public class SeededFeedGenerator {
                 bankLines.add("TXN-" + String.format(Locale.US, "%06d", i + 1) + "-A," + instructionId + "," + businessDay + "T11:00:00," + firstPart + "," + bankStatus + "," + reversalReference + ",BATCH-001");
                 bankLines.add("TXN-" + String.format(Locale.US, "%06d", i + 1) + "-B," + instructionId + "," + businessDay + "T11:02:00," + secondPart + "," + bankStatus + "," + reversalReference + ",BATCH-001");
             } else {
-                lmsLines.add(bookingId + ",LOAN-INT-" + String.format(Locale.US, "%05d", i + 1) + "," + loanRef + "," + businessDay + "T10:10:00," + lmsAmount + ",INR," + lmsStatus + ",BATCH-001");
+                String lmsPartnerReference = referenceMismatch ? corruptReference(loanRef) : loanRef;
+                String bankLinkedReference = referenceMismatch ? corruptReference(instructionId) : instructionId;
+                lmsLines.add(bookingId + ",LOAN-INT-" + String.format(Locale.US, "%05d", i + 1) + "," + lmsPartnerReference + "," + businessDay + "T10:10:00," + lmsAmount + ",INR," + lmsStatus + ",BATCH-001");
                 if (!"MISSING_EVENT".equals(anomaly)) {
-                    bankLines.add("TXN-" + String.format(Locale.US, "%06d", i + 1) + "," + instructionId + "," + businessDay + "T11:00:00," + amount + "," + bankStatus + "," + reversalReference + ",BATCH-001");
+                    bankLines.add("TXN-" + String.format(Locale.US, "%06d", i + 1) + "," + bankLinkedReference + "," + businessDay + "T11:00:00," + amount + "," + bankStatus + "," + reversalReference + ",BATCH-001");
+                }
+                if (referenceMismatch) {
+                    corruptedReferences.add(lmsPartnerReference);
+                    corruptedReferences.add(bankLinkedReference);
                 }
             }
 
             if (anomaly != null) {
                 groundTruthLines.add(instructionId + "," + loanRef + "," + partner + "," + amount + ",INR," + anomaly + "," + status + "," + affectedSource(anomaly) + "," + action(anomaly));
+            }
+            if (referenceMismatch) {
+                referenceMismatchCount++;
+                groundTruthLines.add(instructionId + "," + loanRef + "," + partner + "," + amount + ",INR,REFERENCE_MISMATCH," + status + "," + affectedSource("REFERENCE_MISMATCH") + "," + action("REFERENCE_MISMATCH"));
+            }
+        }
+
+        for (String corrupted : corruptedReferences) {
+            if (realLinkingReferences.contains(corrupted)) {
+                throw new IllegalStateException("Corrupted reference collides with a real linking reference: " + corrupted);
             }
         }
 
@@ -119,6 +154,7 @@ public class SeededFeedGenerator {
             "totalRows=" + (originatorLines.size() + lmsLines.size() + bankLines.size() - 3),
             "uniqueBusinessEvents=" + rowsPerFeed,
             "anomalyCount=" + anomalyCount,
+            "referenceMismatchCount=" + referenceMismatchCount,
             "partners=" + partnerCount,
             "sourceTotals=Originator:" + (originatorLines.size() - 1) + ",LMS:" + (lmsLines.size() - 1) + ",Bank:" + (bankLines.size() - 1)
         ) + System.lineSeparator();
@@ -127,7 +163,7 @@ public class SeededFeedGenerator {
 
         return new GeneratorOutput(originatorPath, lmsPath, bankPath, groundTruthPath, qualityReportPath,
             originatorLines.size() - 1, lmsLines.size() - 1, bankLines.size() - 1,
-            originatorLines.size() + lmsLines.size() + bankLines.size() - 3, anomalyCount);
+            originatorLines.size() + lmsLines.size() + bankLines.size() - 3, anomalyCount, referenceMismatchCount);
     }
 
     private String affectedSource(String anomaly) {
@@ -135,7 +171,7 @@ public class SeededFeedGenerator {
             case "MISSING_EVENT" -> "BANK";
             case "DUPLICATE_EVENT", "TIMING_DIFFERENCE" -> "ORIGINATOR";
             case "AMOUNT_MISMATCH", "STATUS_MISMATCH" -> "LMS";
-            case "COMPOSITE_MATCH" -> "LMS+BANK";
+            case "COMPOSITE_MATCH", "REFERENCE_MISMATCH" -> "LMS+BANK";
             default -> "UNKNOWN";
         };
     }
@@ -148,7 +184,14 @@ public class SeededFeedGenerator {
             case "STATUS_MISMATCH" -> "changed LMS status";
             case "TIMING_DIFFERENCE" -> "moved originator receivedTime after batch cutoff inside grace window";
             case "COMPOSITE_MATCH" -> "split LMS and bank rows into two exact-sum components";
+            case "REFERENCE_MISMATCH" -> "corrupted LMS partnerLoanReference and bank linkedInstructionReference; amount and timestamp preserved";
             default -> "none";
         };
+    }
+
+    private String corruptReference(String reference) {
+        int dash = reference.indexOf('-');
+        // Replace the first digit after the prefix with a non-numeric marker: breaks exact equality, keeps high similarity, cannot collide with any numeric reference.
+        return reference.substring(0, dash + 1) + "X" + reference.substring(dash + 2);
     }
 }

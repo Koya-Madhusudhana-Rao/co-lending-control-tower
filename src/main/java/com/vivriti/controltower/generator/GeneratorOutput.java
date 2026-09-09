@@ -12,6 +12,7 @@ public record GeneratorOutput(
     int lmsRows,
     int bankRows,
     int totalRows,
-    int anomalyCount
+    int anomalyCount,
+    int referenceMismatchCount
 ) {
 }

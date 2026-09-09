@@ -6,6 +6,7 @@ reconciliation:
   graceWindowTimezone: Asia/Kolkata
   graceWindowMode: continuous-clock-hours
   anomalyRate: 0.06
+  referenceMismatchRate: 0.03
   closePolicy:
     absoluteThresholdInr: 10000
     relativeThresholdRate: 0.005
