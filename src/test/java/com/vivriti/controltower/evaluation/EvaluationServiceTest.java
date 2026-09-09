@@ -79,6 +79,19 @@ class EvaluationServiceTest {
     }
 
     @Test
+    void doesNotCountCorrectlyResolvedDuplicateAsFalseMatchExposure() {
+        var input = new EvaluationInput(List.of(
+            originator("INSTR-1", "100.00", MatchingState.EXACT_MATCH, ReconciliationState.MATCHED)
+        ), List.of());
+        var groundTruth = List.of(new GroundTruthRecord("INSTR-1", new BigDecimal("100.00"), "INR", "DUPLICATE_EVENT", "APPROVED"));
+
+        SeedScorecard scorecard = service.evaluate("SEED-A", input, groundTruth);
+
+        assertEquals(0, scorecard.falseMatchCount());
+        assertTrue(scorecard.falseMatchInr().compareTo(BigDecimal.ZERO) == 0);
+    }
+
+    @Test
     void reportsZeroFalseMatchExposureWhenNoMatchedRecordIsAnomalous() {
         var input = new EvaluationInput(List.of(
             originator("INSTR-1", "100.00", MatchingState.EXACT_MATCH, ReconciliationState.MATCHED)

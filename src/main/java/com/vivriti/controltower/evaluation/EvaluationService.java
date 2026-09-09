@@ -93,6 +93,10 @@ public class EvaluationService {
     }
 
     private boolean isExpectedResolution(String anomalyType, MatchingState matchingState) {
-        return "COMPOSITE_MATCH".equals(anomalyType) && matchingState == MatchingState.COMPOSITE_MATCH;
+        if ("COMPOSITE_MATCH".equals(anomalyType) && matchingState == MatchingState.COMPOSITE_MATCH) {
+            return true;
+        }
+        // A quarantined duplicate leaves a correct surviving transaction; the match is not false exposure.
+        return "DUPLICATE_EVENT".equals(anomalyType);
     }
 }

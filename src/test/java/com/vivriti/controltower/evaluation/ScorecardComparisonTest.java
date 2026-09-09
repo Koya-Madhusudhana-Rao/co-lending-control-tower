@@ -1,6 +1,8 @@
 package com.vivriti.controltower.evaluation;
 
 import com.vivriti.controltower.domain.CanonicalEvent;
+import com.vivriti.controltower.exceptions.ExceptionMaterializer;
+import com.vivriti.controltower.exceptions.ExceptionRecord;
 import com.vivriti.controltower.generator.GeneratorOutput;
 import com.vivriti.controltower.generator.SeededFeedGenerator;
 import com.vivriti.controltower.ingestion.FeedIngestionService;
@@ -40,6 +42,8 @@ class ScorecardComparisonTest {
         assertEquals("SEED-B", comparison.seedB().seedLabel());
         assertTrue(seedA.exactMatchCount() > 0);
         assertTrue(seedB.exactMatchCount() > 0);
+        assertTrue(seedA.exceptionCoverageRate() > 0.0);
+        assertTrue(seedB.exceptionCoverageRate() > 0.0);
         assertTrue(report.contains("SEED-A"));
         assertTrue(report.contains("SEED-B"));
         assertTrue(report.contains("Material differences:"));
@@ -77,9 +81,28 @@ class ScorecardComparisonTest {
     private SeedScorecard evaluateSeed(String label, long seed) throws Exception {
         Path output = Files.createTempDirectory("scorecard-" + seed);
         GeneratorOutput generated = new SeededFeedGenerator(seed, 30, 3, 30, 0.06d, output).generate();
-        List<CanonicalEvent> events = reconcile(generated);
+        FeedIngestionService ingestion = new FeedIngestionService();
+        CanonicalNormalizer normalizer = new CanonicalNormalizer();
+        List<CanonicalEvent> events = new ArrayList<>();
+        IngestionBatchResult originator = ingestion.ingest(FeedType.ORIGINATOR, dataLines(generated.originatorPath()), "BATCH-001", null, CUTOFF);
+        IngestionBatchResult lms = ingestion.ingest(FeedType.LMS, dataLines(generated.lmsPath()), "BATCH-001", null, CUTOFF);
+        IngestionBatchResult bank = ingestion.ingest(FeedType.BANK, dataLines(generated.bankPath()), "BATCH-001", null, CUTOFF);
+        events.addAll(normalizer.normalize(FeedType.ORIGINATOR, originator.acceptedRecords(), "originator.csv", CUTOFF));
+        events.addAll(normalizer.normalize(FeedType.LMS, lms.acceptedRecords(), "lms.csv", CUTOFF));
+        events.addAll(normalizer.normalize(FeedType.BANK, bank.acceptedRecords(), "bank.csv", CUTOFF));
+        new ExactReconciliationMatcher(new BigDecimal("1.00")).reconcile(events);
+        new CompositeAndTimingMatcher().reconcile(events);
+        List<String> duplicates = duplicateBusinessEventIds(originator);
+        List<ExceptionRecord> exceptions = new ExceptionMaterializer().materialize(events, duplicates, CUTOFF);
         List<GroundTruthRecord> groundTruth = new GroundTruthReader().read(generated.groundTruthPath());
-        return evaluation.evaluate(label, new EvaluationInput(events, List.of()), groundTruth);
+        return evaluation.evaluate(label, new EvaluationInput(events, exceptions), groundTruth);
+    }
+
+    private List<String> duplicateBusinessEventIds(IngestionBatchResult originator) {
+        return originator.quarantinedRecords().stream()
+            .filter(record -> record.validationState() == com.vivriti.controltower.domain.ValidationState.DUPLICATE)
+            .map(record -> record.originalRecord().split(",", -1)[0])
+            .toList();
     }
 
     private List<CanonicalEvent> reconcile(GeneratorOutput generated) throws Exception {
