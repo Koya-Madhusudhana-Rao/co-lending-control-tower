@@ -1,0 +1,17 @@
+# Known limitations
+
+These are accepted Phase 1 limitations, documented rather than fixed now.
+
+## Concurrent writes / locking on `data/runs/`
+
+- Current design assumes a single-operator, single-process batch workflow.
+- `DurableRunStore` writes one directory per deterministic batch fingerprint and does not take file locks or coordinate concurrent writers.
+- This is acceptable for Phase 1 because batches are processed sequentially by one operator, not concurrently by multiple processes.
+- Multi-writer locking is a documented future improvement, not a Phase 1 requirement.
+
+## Corrupted persisted-JSON recovery
+
+- Current behavior: if a persisted run file under `data/runs/<batchFingerprint>/` is corrupted or unreadable, `DurableRunStore` throws `IllegalStateException`, which propagates out of `Phase1PipelineService.process(...)`.
+- So today a corrupted persisted run fails loudly (crash on that batch) rather than degrading gracefully or rebuilding from source.
+- It does not silently return wrong totals, and other batches are unaffected.
+- Graceful recovery (detect corruption, quarantine the bad run directory, and reprocess from source) is a documented future improvement, not required now.
