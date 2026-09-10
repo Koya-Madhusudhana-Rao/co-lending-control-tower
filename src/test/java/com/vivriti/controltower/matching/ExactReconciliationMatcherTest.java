@@ -76,6 +76,30 @@ class ExactReconciliationMatcherTest {
     }
 
     @Test
+    void neverExactMatchesAReversedBankLeg() {
+        CanonicalEvent originator = event(SourceSystem.ORIGINATOR, "INSTR-001", "LOAN-001", "LOAN-001", "100.00", "INR");
+        CanonicalEvent lms = event(SourceSystem.LMS, "BOOK-001", "LOAN-INT-001", "LOAN-001", "100.00", "INR");
+        CanonicalEvent bank = event(SourceSystem.BANK, "TXN-001", "INSTR-001", "INSTR-001", "100.00", "INR");
+        bank.setSourceStatus("REVERSED");
+
+        assertNoMatch(originator, lms, bank);
+    }
+
+    @Test
+    void preservesSignedReversalAmountAndNeverSilentlyMatchesIt() {
+        CanonicalEvent originator = event(SourceSystem.ORIGINATOR, "INSTR-001", "LOAN-001", "LOAN-001", "100.00", "INR");
+        CanonicalEvent lms = event(SourceSystem.LMS, "BOOK-001", "LOAN-INT-001", "LOAN-001", "100.00", "INR");
+        CanonicalEvent bank = event(SourceSystem.BANK, "TXN-001", "INSTR-001", "INSTR-001", "-100.00", "INR");
+        bank.setSourceStatus("REVERSED");
+        bank.setReversalReference("REV-001");
+
+        // The negative debit is preserved as-is on the canonical event (never absolute-valued or netted).
+        assertEquals(0, bank.getAmount().compareTo(new BigDecimal("-100.00")));
+        // A reversal is reconciled as its own event, never silently matched against the positive disbursement.
+        assertNoMatch(originator, lms, bank);
+    }
+
+    @Test
     void leavesLateArrivalRecordsUnsetForTimingLevel() {
         CanonicalEvent originator = event(SourceSystem.ORIGINATOR, "INSTR-001", "LOAN-001", "LOAN-001", "100.00", "INR");
         CanonicalEvent lms = event(SourceSystem.LMS, "BOOK-001", "LOAN-INT-001", "LOAN-001", "100.00", "INR");

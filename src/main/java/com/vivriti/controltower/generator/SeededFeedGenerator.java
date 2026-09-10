@@ -110,7 +110,9 @@ public class SeededFeedGenerator {
                 String bankLinkedReference = referenceMismatch ? corruptReference(instructionId) : instructionId;
                 lmsLines.add(bookingId + ",LOAN-INT-" + String.format(Locale.US, "%05d", i + 1) + "," + lmsPartnerReference + "," + businessDay + "T10:10:00," + lmsAmount + ",INR," + lmsStatus + ",BATCH-001");
                 if (!"MISSING_EVENT".equals(anomaly)) {
-                    bankLines.add("TXN-" + String.format(Locale.US, "%06d", i + 1) + "," + bankLinkedReference + "," + businessDay + "T11:00:00," + amount + "," + bankStatus + "," + reversalReference + ",BATCH-001");
+                    // A reversal settlement is represented as a signed (negative) debit amount, preserved as-is.
+                    BigDecimal bankDebitAmount = "REVERSED".equals(bankStatus) ? amount.negate() : amount;
+                    bankLines.add("TXN-" + String.format(Locale.US, "%06d", i + 1) + "," + bankLinkedReference + "," + businessDay + "T11:00:00," + bankDebitAmount + "," + bankStatus + "," + reversalReference + ",BATCH-001");
                 }
                 if (referenceMismatch) {
                     corruptedReferences.add(lmsPartnerReference);

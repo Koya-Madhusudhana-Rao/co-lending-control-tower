@@ -168,6 +168,30 @@ class SeededFeedGeneratorTest {
         return corrupted;
     }
 
+    @Test
+    void reversalSettlementsCarryNegativeSignedDebitAmount() throws IOException {
+        GeneratorOutput output = new SeededFeedGenerator(12345L, 2000, 3, 2000, configuredAnomalyRate(), 0.0d,
+            Files.createTempDirectory("gen-negative")).generate();
+
+        List<String> bank = Files.readAllLines(output.bankPath());
+        int reversedCount = 0;
+        for (int i = 1; i < bank.size(); i++) {
+            String[] columns = bank.get(i).split(",", -1);
+            // Composite split parts are a separate scenario and stay positive.
+            if (columns[0].endsWith("-A") || columns[0].endsWith("-B")) {
+                continue;
+            }
+            java.math.BigDecimal debit = new java.math.BigDecimal(columns[3]);
+            if ("REVERSED".equals(columns[4])) {
+                reversedCount++;
+                assertTrue(debit.signum() < 0, "reversal debit must be negative: " + bank.get(i));
+            } else {
+                assertTrue(debit.signum() >= 0, "non-reversal debit must be non-negative: " + bank.get(i));
+            }
+        }
+        assertTrue(reversedCount > 0, "expected at least one reversal settlement in the batch");
+    }
+
     private double configuredReferenceMismatchRate() {
         YamlPropertiesFactoryBean yaml = new YamlPropertiesFactoryBean();
         yaml.setResources(new FileSystemResource(Path.of("config", "reconciliation.yml")));
