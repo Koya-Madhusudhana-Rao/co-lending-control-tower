@@ -53,6 +53,10 @@ public class ExceptionMaterializer {
         BigDecimal bankSum = sum(bank);
         boolean currencyMismatch = lms.stream().anyMatch(event -> !agree(originator.getCurrency(), event.getCurrency()))
             || bank.stream().anyMatch(event -> !agree(originator.getCurrency(), event.getCurrency()));
+        // A reversal is a status event, not an amount discrepancy; route it before the amount check so the signed reversal amount is not misread.
+        if (bank.stream().anyMatch(event -> "REVERSED".equals(event.getSourceStatus()))) {
+            return ExceptionClassification.STATUS_MISMATCH;
+        }
         boolean amountMismatch = differsBeyondTolerance(originator.getAmount(), lmsSum)
             || differsBeyondTolerance(originator.getAmount(), bankSum);
         if (currencyMismatch || amountMismatch) {

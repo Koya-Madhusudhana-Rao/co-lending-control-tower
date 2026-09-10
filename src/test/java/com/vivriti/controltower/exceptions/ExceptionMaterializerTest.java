@@ -54,6 +54,18 @@ class ExceptionMaterializerTest {
     }
 
     @Test
+    void materializesReversedBankAsStatusMismatchOwnedByOperations() {
+        CanonicalEvent originator = originator("INSTR-1", "LOAN-1", "100.00", "APPROVED");
+        CanonicalEvent lms = lms("LOAN-1", "100.00", "APPROVED");
+        CanonicalEvent bank = bank("INSTR-1", "-100.00", "REVERSED");
+
+        List<ExceptionRecord> records = materializer.materialize(List.of(originator, lms, bank), List.of(), detectedAt);
+
+        assertEquals(ExceptionClassification.STATUS_MISMATCH, records.get(0).classification());
+        assertEquals("Operations", records.get(0).owner());
+    }
+
+    @Test
     void materializesDuplicateExceptionRoutedToEngineeringSourcePartner() {
         CanonicalEvent survivor = originator("INSTR-1", "LOAN-1", "100.00", "APPROVED");
         survivor.setMatchingState(MatchingState.EXACT_MATCH);
