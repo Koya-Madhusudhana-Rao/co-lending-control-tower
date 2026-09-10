@@ -112,3 +112,30 @@ See [decision-log.md](decision-log.md) for the full decision record.
 
 JDK 17 and Maven only. No database, Docker, or external service is required for Phase 1. Durable state
 is written under `data/runs/<fingerprint>/`, and `data/` is git-ignored.
+
+## Production path (plan, not implemented)
+
+A staged plan for taking this from a single-operator case study to a production control tower. None of
+this is built; it is the intended path.
+
+- **Monitoring / observability.** Structured logs per stage with the batch fingerprint as the
+  correlation key; metrics for rows ingested/quarantined, matches by level, unresolved INR, close/hold
+  outcome, and probabilistic surfaced/confirmed counts; alerts on control-total-integrity failures,
+  exception-coverage < 1.0, and any HOLD. Every reported number stays recalculable from stored source
+  + decision records (reproducible-totals control).
+- **Ownership model.** Deterministic reconciliation owned by the Reconciliation/Finance-engineering
+  team; the exception queue routed by the ownership table in [assumptions.md](assumptions.md) (Partner
+  Ops, Finance, Engineering, Integration Engineering); the probabilistic stretch owned by a separate
+  team so its changes cannot destabilize the deterministic path.
+- **Staged rollout.** (1) Shadow mode — run against real feeds, produce reports, take no action.
+  (2) Deterministic-only in production with close/hold advisory. (3) Enforce close/hold. (4) Enable
+  probabilistic scoring in surface-only mode (no confirmation). (5) Enable human confirmation for a
+  limited partner set, then expand. Each stage is gated on the prior stage's metrics.
+- **Reconciliation approach.** Every batch carries an auditable count-and-value control: every source
+  record is matched, pending-within-policy, or in the unresolved queue, and the Originator-based batch
+  total reconciles against matched + pending + unresolved. Divergence blocks close.
+- **Rollback plan.** Config-level: disable probabilistic matching (deterministic fallback is
+  byte-identical to Phase 1) and revert threshold/weight config — no code change. Code-level: runs are
+  immutable and keyed by fingerprint, so a bad release is rolled back by redeploying the prior version
+  and reprocessing affected batches (idempotent — no double effects). No financial state is mutated in
+  place, so rollback never corrupts prior decisions.

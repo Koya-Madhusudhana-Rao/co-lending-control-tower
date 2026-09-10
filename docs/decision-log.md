@@ -51,3 +51,23 @@
 - Trade-offs: Close/hold now depends on materialization running first and on correct source attribution; the ordering is enforced in `Phase1PipelineService`.
 - Rejected alternative: Reading `detections()` (a) left the control silently disabled; cross-source summation (b) produced a blocking figure that did not reconcile against the Originator-based batch total.
 - Verified outcome: Seed A (12345) produces a HOLD decision with blocking value INR 6,051,643 across 136 blocking references and 158 persisted exceptions, cross-checked against the evaluation harness.
+
+## Interface: CLI trigger over REST API
+
+- Decision: satisfy the case study's user-journey requirement (page 4) with a CLI trigger (the opt-in `demo` profile runner) rather than a REST API.
+- Context: an early preference (and the original stack note) leaned toward REST endpoints. On confirming the actual PDF requirement, the user journey — generate a dataset, run the pipeline, produce a decision and reports — is fully satisfied by a scripted/CLI trigger; the PDF does not mandate REST.
+- Chosen: a one-command CLI entry point plus generated reports (CSV/JSON/quality report), no REST layer.
+- Why: deliberate scope discipline. A REST API would add controllers, serialization, error handling, and integration tests the requirement does not need, spending time better used on correctness, evaluation, and documentation (Correctness > simplicity > UI/API surface).
+- Trade-offs: no live HTTP interface for external callers; a future integration would add REST in front of the existing services (the stage packages are already service-shaped).
+- This is a considered scope choice confirmed against the actual PDF, not an oversight.
+
+## What I would build next (beyond the recorded trade-offs)
+
+Distinct from the trade-offs above (which explain choices already made), these are the next things I would build given more time:
+
+1. RDBMS persistence (PostgreSQL) replacing the JSON run store, unlocking querying, retention, and concurrent multi-operator workflows (the storage design in `docs/phase2-design.md` §10).
+2. Precision improvement for probabilistic matching by making status a scoring feature and adding a mutual-consistency signal — carefully, so it does not reclassify the genuine `AMOUNT_MISMATCH` residual (`docs/known-limitations.md`).
+3. A REST API + minimal operator UI over the existing service-shaped stages for the exception queue and the human-confirmation workflow.
+4. Blocking-reference readability: map raw source locations to instruction IDs in the close/hold output (`docs/known-limitations.md`).
+5. Richer generator anomaly classes (orphan reversal, schema drift, control-total mismatch) to widen evaluation coverage, gated the same way `REFERENCE_MISMATCH` was.
+6. Observability and the staged-rollout tooling described in the architecture Production path.

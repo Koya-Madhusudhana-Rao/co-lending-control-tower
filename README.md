@@ -57,4 +57,4 @@ mvn test
 
 ## Project status
 
-This repository is in the deterministic Phase 1 implementation stage. PostgreSQL/JPA infrastructure was intentionally removed after the persistence decision in `docs/decision-log.md`.
+Both phases are complete. **Phase 1** (deterministic reconciliation: ingestion, canonical model, exact/composite/timing matching, exception queue, close/hold, evaluation) passed its full gate checklist. **Phase 2** (Level 4 probabilistic matching with a candidacy filter, a two-actor human confirmation workflow, and separately-measured precision/recall) is implemented and documented in `docs/phase2-design.md`. PostgreSQL/JPA infrastructure was intentionally removed after the persistence decision in `docs/decision-log.md`; runtime state persists as durable JSON under `data/runs/`.

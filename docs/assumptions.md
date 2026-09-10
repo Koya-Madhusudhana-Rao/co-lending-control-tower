@@ -27,6 +27,13 @@
 - Split relationships are preserved using the parent/reference relationship captured in the canonical event model.
 - A reversal does not automatically nullify a previously matched disbursement; it remains visible as a separate financial event with its own reconciliation decision.
 
+## Negative and signed-value rules
+
+- Signed amounts (e.g. reversals, adjustments, chargebacks) are preserved as-is on the canonical event; the system never takes absolute values or nets a negative against a positive to force a balance.
+- A negative or reversing amount is reconciled as its own financial event under the same matching hierarchy; it does not silently cancel a previously matched disbursement (consistent with the reversal rule above).
+- The INR 1.00 amount tolerance is applied to the absolute difference, so it behaves symmetrically for positive and negative values.
+- Current status: the deterministic generator produces positive disbursement amounts plus reversal-status settlements; explicit negative-amount rows and a dedicated negative-value test are a documented gap to add when generator/test changes are in scope (this pass is documentation-only).
+
 ## Late-arrival rules
 
 - A record arriving after cut-off but within the configured grace window remains in PENDING / TIMING_DIFFERENCE_PENDING state.

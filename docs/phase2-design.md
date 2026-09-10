@@ -274,3 +274,34 @@ exception coverage **1.0**, control-total integrity **true**. Expected shifts on
 matches 1830 → 1788, straight-through 0.922 → 0.901; Seed B exact 1826 → 1773, straight-through
 0.923 → 0.8965. The Phase 1 gate holds.
 
+## 10. Production-scale design (documentation-level, not implemented)
+
+This is a design-level sketch of a real deployment; the current build is a deterministic
+single-operator case study and intentionally does not implement any of this.
+
+- **Target scale assumption.** ~1–5M disbursement instructions/day across tens of partners, batch
+  reconciliation on a fixed cut-off plus intraday micro-batches; peak ingest ~a few thousand rows/sec
+  per feed. The current file-based single-process design targets ~thousands of events per batch.
+- **Component boundaries.** The existing stage packages (ingestion → normalization → matching →
+  exceptions → close/hold → evaluation) become independently deployable services behind an internal
+  API/event bus. Ingestion + normalization scale horizontally (stateless per row); matching and
+  close/hold are stateful per batch and shard by partner + business-day. The Level 4 scorer and the
+  human-confirmation workflow are a separate service, so probabilistic load never affects the
+  deterministic path.
+- **Storage approach.** Replace the JSON `DurableRunStore` with an RDBMS (PostgreSQL) for canonical
+  events, exceptions, audit trail, and decisions, plus object storage for immutable raw source payloads
+  (hash-addressed for lineage). Append-only audit table; run snapshots keyed by the same deterministic
+  batch fingerprint used today.
+- **Consistency model.** Strong consistency within a batch (processed and persisted atomically,
+  idempotent by fingerprint); cross-batch and cross-partner eventually consistent. Reconciliation
+  decisions are immutable once written; corrections are new versioned events, never mutations
+  (source-immutability control carried over from Phase 1).
+- **SLOs (targets).** Batch reconciliation completes within the cut-off + 2h grace window; exception
+  materialization p99 < 5 min after batch close; close/hold decision available < 10 min after all feeds
+  land; probabilistic scoring is best-effort and off the critical path (never blocks the deterministic
+  close). Availability 99.9% for the deterministic path, lower for the probabilistic stretch.
+- **Cost assumptions.** Cost is dominated by RDBMS + object storage + batch-matching compute;
+  probabilistic scoring adds bounded CPU only (no GPUs/model hosting — it is deterministic similarity,
+  not ML) and scales roughly linearly with row volume. The human-confirmation queue is the main
+  operational (people) cost, not infrastructure.
+
