@@ -7,13 +7,19 @@ import com.vivriti.controltower.domain.ReconciliationState;
 import com.vivriti.controltower.domain.SourceSystem;
 import com.vivriti.controltower.domain.ValidationState;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
 
 import java.math.BigDecimal;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
 
 class CompositeAndTimingMatcherTest {
 
@@ -103,6 +109,33 @@ class CompositeAndTimingMatcherTest {
         assertEquals(MatchingState.EXACT_MATCH, exactOriginator.getMatchingState());
         assertNull(firstBooking.getMatchingState());
         assertNull(secondBooking.getReconciliationState());
+    }
+     @Test
+    void configuredGraceWindowHoursActuallyDrivesTimingBehavior(@TempDir Path tempDir) throws Exception {
+        Path configPath = tempDir.resolve("reconciliation.yml");
+        Files.writeString(configPath, "reconciliation:\n  graceWindowHours: 1\n");
+        CompositeAndTimingMatcher oneHourMatcher = CompositeAndTimingMatcher.fromConfig(configPath);
+
+        CanonicalEvent late = event(SourceSystem.ORIGINATOR, "INSTR-001", "LOAN-001", "100.00");
+        late.setValidationState(ValidationState.LATE_ARRIVAL);
+        late.setReconciliationCutOff(cutoff);
+        late.setReceivedTimestamp(cutoff.plusHours(1).plusMinutes(30));
+
+        CompositeAndTimingResult configuredResult = oneHourMatcher.reconcile(List.of(late));
+
+        assertEquals(0, configuredResult.timingEvents().size());
+        assertNull(late.getMatchingState());
+        assertNull(late.getReconciliationState());
+
+        CanonicalEvent sameLate = event(SourceSystem.ORIGINATOR, "INSTR-001", "LOAN-001", "100.00");
+        sameLate.setValidationState(ValidationState.LATE_ARRIVAL);
+        sameLate.setReconciliationCutOff(cutoff);
+        sameLate.setReceivedTimestamp(cutoff.plusHours(1).plusMinutes(30));
+
+        CompositeAndTimingResult defaultResult = new CompositeAndTimingMatcher().reconcile(List.of(sameLate));
+
+        assertTrue(defaultResult.timingEvents().contains(sameLate));
+        assertEquals(MatchingState.TIMING_DIFFERENCE_PENDING, sameLate.getMatchingState());
     }
 
     private CanonicalEvent event(SourceSystem source, String id, String relationship, String amount) {
