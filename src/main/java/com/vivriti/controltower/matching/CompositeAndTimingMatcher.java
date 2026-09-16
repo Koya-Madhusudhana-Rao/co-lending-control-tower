@@ -6,21 +6,49 @@ import com.vivriti.controltower.domain.ReconciliationState;
 import com.vivriti.controltower.domain.SourceSystem;
 import com.vivriti.controltower.domain.ValidationState;
 
+
+import org.springframework.beans.factory.config.YamlPropertiesFactoryBean;
+import org.springframework.core.io.FileSystemResource;
+
 import java.math.BigDecimal;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
 public class CompositeAndTimingMatcher {
 
-    private static final Duration GRACE_WINDOW = Duration.ofHours(2);
+private static final Duration DEFAULT_GRACE_WINDOW = Duration.ofHours(2);
 
+    private final Duration graceWindow;
+
+    public CompositeAndTimingMatcher() {
+        this(DEFAULT_GRACE_WINDOW);
+    }
+
+    public CompositeAndTimingMatcher(Duration graceWindow) {
+        this.graceWindow = graceWindow;
+    }
+
+    public static CompositeAndTimingMatcher fromConfig(Path configPath) {
+        YamlPropertiesFactoryBean yaml = new YamlPropertiesFactoryBean();
+        yaml.setResources(new FileSystemResource(configPath));
+        yaml.afterPropertiesSet();
+        Properties properties = yaml.getObject();
+        if (properties == null) {
+            throw new IllegalArgumentException("Grace window config is required");
+        }
+        return new CompositeAndTimingMatcher(
+            Duration.ofHours(Long.parseLong(properties.getProperty("reconciliation.graceWindowHours")))
+        );
+    }
     public CompositeAndTimingResult reconcile(List<CanonicalEvent> events) {
         List<CanonicalEvent> leftoverUnmatched = events.stream()
             .filter(event -> event.getMatchingState() != MatchingState.EXACT_MATCH)
@@ -44,7 +72,7 @@ public class CompositeAndTimingMatcher {
             }
             LocalDateTime cutoff = event.getReconciliationCutOff();
             if (event.getReceivedTimestamp().isAfter(cutoff)
-                && !event.getReceivedTimestamp().isAfter(cutoff.plus(GRACE_WINDOW))) {
+                && !event.getReceivedTimestamp().isAfter(cutoff.plus(graceWindow))) {
                 event.setMatchingState(MatchingState.TIMING_DIFFERENCE_PENDING);
                 event.setReconciliationState(ReconciliationState.PENDING);
                 timingEvents.add(event);
