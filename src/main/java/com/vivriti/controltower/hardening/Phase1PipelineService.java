@@ -35,7 +35,7 @@ public class Phase1PipelineService {
     private final FeedIngestionService ingestion = new FeedIngestionService();
     private final CanonicalNormalizer normalizer = new CanonicalNormalizer();
     private final ExactReconciliationMatcher exactMatcher;
-    private final CompositeAndTimingMatcher compositeAndTiming = new CompositeAndTimingMatcher();
+    private final CompositeAndTimingMatcher compositeAndTiming;
     private final ExceptionQueueService exceptions = new ExceptionQueueService();
     private final ExceptionMaterializer materializer = new ExceptionMaterializer();
     private final CloseHoldService closeHold;
@@ -55,6 +55,7 @@ public class Phase1PipelineService {
     public Phase1PipelineService(Path runsRoot, ProbabilisticMatchConfig probabilisticConfig) {
         CloseHoldPolicy policy = CloseHoldPolicy.fromConfig(Path.of("config", "reconciliation.yml"));
         this.exactMatcher = new ExactReconciliationMatcher(new BigDecimal("1.00"));
+        this.compositeAndTiming = CompositeAndTimingMatcher.fromConfig(Path.of("config", "reconciliation.yml"));
         this.closeHold = new CloseHoldService(policy);
         this.durableRunStore = new DurableRunStore(runsRoot);
         this.probabilisticMatcher = new ProbabilisticMatcher(probabilisticConfig);
